@@ -5,3 +5,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(COMMON_SRCS "${PROJECT_SOURCE_DIR}/src")
 set(COMMON_INCLUDES "${PROJECT_SOURCE_DIR}/src")
+
+add_executable(NovaGround 
+    "main.cpp"
+)
