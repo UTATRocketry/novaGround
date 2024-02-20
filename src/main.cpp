@@ -1,11 +1,11 @@
-#include "sensors.h"
+#include "sensors.cpp"
+#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
 int main() {
     time_t t;
-    double read_out = query_sensor(-1);
-    printf("Readout: %.3f\n", read_out);
+    std::cout << query_sensor(-1);
     return 0;
 }
