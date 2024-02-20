@@ -1,3 +1,5 @@
+#include "sensors.h"
+
 double query_sensor(int input_key) {
     //! should I do library including here as well?
     // if input_key = -1, then return dummy sensor
