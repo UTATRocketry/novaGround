@@ -6,6 +6,7 @@
 #include <daqhats/mcc128.h>
 
 #include "src/mccdaq.h"
+#include "src/dummysensor.h"
 
 int main() {
     int loop_upper_bound = 100;
@@ -21,6 +22,8 @@ int main() {
         for (int i = 0; i < 4; i++ ){
             std::cout << "Channel " << i << ": " << getDaqValue(0, i) << std::endl;
         }
+
+        std::cout << "Dummy Sensor: " << dummysensor(0, 10) << std::endl << std::endl;
     }
 
     mcc128_close(0);
