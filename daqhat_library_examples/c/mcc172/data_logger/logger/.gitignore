@@ -1,8 +1,0 @@
-LogFiles/*
-*.o
-logger
-bin/*
-obj/*
-*.cbp
-*.depend
-*.layout
