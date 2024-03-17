@@ -2,10 +2,10 @@
 #include <daqhats/mcc128.h>
 #include <daqhats/daqhats.h>
 #include <vector>
+#include <cstdint>
 
 std::vector<int> initialize_daqs(){
-    // Return a vector<int> with the addresses of the connected DAQs
-    // Does this work? Not at the moment. 
+    // this works with minimal testing.
     
     std::vector<int> connected_daqs;
 	int count = hat_list(HAT_ID_ANY, NULL);
@@ -56,13 +56,24 @@ std::vector<int> get_available_128daqs(){
 }
 
 int close_daqs(std::vector<int> list_of_daqs){
-    return 0; 
+    // NOTE: THIS IS HARDCODED FOR MCC128s, AND WILL NOT, IN THE CURRENT CONFIGURATION, WORK OTHERWISE.
+    // Currently doesn't seem to work. result_code keeps returning -1 
+    for (int i = 0; i<(int)list_of_daqs.capacity(); i++){
+        std::cout<<list_of_daqs[i]<<std::endl; 
+        int result_code = mcc128_close((uint8_t)list_of_daqs[i]); 
+        std::cout<<+result_code<<std::endl; 
+        if (result_code != RESULT_SUCCESS){
+            std::cout<<"ERROR IN close_daqs()"<<std::endl; 
+            return 0; 
+        }
+    }
+    return 1; 
     
 
 }
 
 double getDaqValue(int address, int channel) {
-    // Is this functional? Doesn't seem to do much. . . 
+   
     double value;
     int result; 
     uint32_t options = OPTS_DEFAULT;

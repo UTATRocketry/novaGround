@@ -10,10 +10,9 @@
 
 int main(){
 	std::vector<int> list_of_daqs = initialize_daqs(); 
-	for (int i = 0; i<(int)list_of_daqs.capacity(); i++){
-		std::cout<<"DAQ no. " <<i+1<<": " << list_of_daqs[i]<<std::endl; 
-	} 
-	
+	 
+	close_daqs(list_of_daqs); 
+
 	
 	return 0; 
 }
