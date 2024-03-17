@@ -5,22 +5,23 @@
 
 std::vector<int> initialize_daqs(){
     // Return a vector<int> with the addresses of the connected DAQs
-
+    // Does this work? Not at the moment. 
     
     std::vector<int> connected_daqs;
 	int count = hat_list(HAT_ID_ANY, NULL);
-	std::cout<<"Number of DAQs connected: " <<count<<std::endl; 
+	//std::cout<<"Number of DAQs connected: " <<count<<std::endl; 
 
 	if (count>0){
 		struct HatInfo* list = (struct HatInfo*)malloc(count*sizeof(struct HatInfo)); 
 		hat_list(HAT_ID_ANY, list); 
 		
 		for (int i = 0; i < count; i++){
-			
-			std::cout<< "Address " << +list[i].address <<std::endl; 
-			std::cout<< "Version" << list[i].version<<std::endl;
-			std::cout<< "Product Name" << list[i].product_name<<std::endl;
-			std::cout<< "ID" << list[i].id<<std::endl;
+            connected_daqs.push_back(+list[i].address); 
+			//useful for like debugging 
+			//std::cout<< "Address " << +list[i].address <<std::endl; 
+			//std::cout<< "Version" << list[i].version<<std::endl;
+			//std::cout<< "Product Name" << list[i].product_name<<std::endl;
+			//std::cout<< "ID" << list[i].id<<std::endl;
 		}
 		
 		free(list); 
@@ -41,10 +42,10 @@ std::vector<int> get_available_128daqs(){
 		
 		for (int i = 0; i < count; i++){
 			
-			std::cout<< "Address " << +list[i].address <<std::endl; 
-			std::cout<< "Version" << list[i].version<<std::endl;
-			std::cout<< "Product Name" << list[i].product_name<<std::endl;
-			std::cout<< "ID" << list[i].id<<std::endl;
+			std::cout<< "Address: " << +list[i].address <<std::endl; 
+			std::cout<< "Version: " << list[i].version<<std::endl;
+			std::cout<< "Product Name: " << list[i].product_name<<std::endl;
+			std::cout<< "ID: " << list[i].id<<std::endl;
 		}
 		
 		free(list); 
@@ -54,15 +55,19 @@ std::vector<int> get_available_128daqs(){
     return connected_daqs;
 }
 
-void close_daqs(){
+int close_daqs(std::vector<int> list_of_daqs){
+    return 0; 
+    
 
 }
 
 double getDaqValue(int address, int channel) {
+    // Is this functional? Doesn't seem to do much. . . 
     double value;
-    int result;
+    int result; 
     uint32_t options = OPTS_DEFAULT;
     result = mcc128_a_in_read(address, channel, options , &value);
+    
     return value;
 }
 
