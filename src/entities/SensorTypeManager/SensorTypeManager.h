@@ -4,6 +4,7 @@
 
 class SensorTypeManager {
     public:
+
         virtual int initSensors();
         virtual double querySensor();
 
