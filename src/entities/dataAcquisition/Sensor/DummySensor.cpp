@@ -10,3 +10,7 @@ DummySensor::DummySensor(std::map<std::string, std::string> args) {
     this->re = re;
     this->unif = unif;
 }
+
+double DummySensor::readData() {
+    return this->unif(this->re);
+}

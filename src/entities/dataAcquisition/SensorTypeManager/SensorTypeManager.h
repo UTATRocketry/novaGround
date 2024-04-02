@@ -1,6 +1,6 @@
 #include <vector>
 #include <string>
-#include <Sensor.h>
+#include "Sensor.h"
 
 class SensorTypeManager {
     public:

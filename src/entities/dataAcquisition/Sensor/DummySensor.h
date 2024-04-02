@@ -6,7 +6,7 @@
 class DummySensor : Sensor {
     public:
         DummySensor(std::map<std::string, std::string> args);
-        double read_data() override;
+        double readData() override;
 
     private:
         std::uniform_real_distribution<double> unif;
