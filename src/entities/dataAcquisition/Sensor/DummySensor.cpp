@@ -9,6 +9,4 @@ DummySensor::DummySensor() {
     this->unif_ = unif;
 }
 
-auto DummySensor::readData() -> double{
-    return this->unif_(this->r_eng_);
-}
+auto DummySensor::readData() -> double { return this->unif_(this->r_eng_); }

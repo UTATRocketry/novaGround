@@ -7,8 +7,6 @@ cpp = meson.get_compiler('cpp')
 # clang = cpp.find_clang()
 daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 
-
-
 #### Grab source files
 src = []
 subdir('src')
@@ -17,18 +15,20 @@ subdir('src')
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
 clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-format', required: false)
 
-# if clangtidy.found()
-#     message('Running Clang Tidy')
-#     tidy = run_command([
-#             clangtidy,
-#             '--config-file', meson.source_root() + '/.clang-tidy',
-#             '-p', meson.build_root(),
-#             '-fix-errors'
-#     ] + src,
-#     check: true)
-#     message(tidy.stderr())
-#     message('Clang Tidy Complete')
-# endif
+if clangtidy.found()
+    message('Running Clang Tidy')
+    tidy = run_command([
+            clangtidy,
+            '--config-file', meson.source_root() + '/.clang-tidy',
+            '-p', meson.build_root(),
+            '-fix-errors'
+    ] + src,
+    check: true)
+    message(tidy.stderr())
+    message('Clang Tidy Complete')
+else
+    message('Could not find clang-tidy')
+endif
 
 if clangformat.found()
     message('Running Clang Format')
@@ -40,7 +40,9 @@ if clangformat.found()
     ] + src,
     check: false)
     message(format.stderr())
-    message('Clang Tidy Complete')
+    message('Clang Format Complete')
+else
+    message('Could not find clang-format')
 endif
 
 
