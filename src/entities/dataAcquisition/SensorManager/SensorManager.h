@@ -1,21 +1,21 @@
 #pragma once
 
+#include <memory>
 #include <vector>
-#include <string>
 #include "../Sensor/Sensor.h"
 
-class SensorTypeManager {
+class SensorManager {
     public:
 
-        virtual int initSensors() = 0;
-        virtual double querySensor() = 0;
+        virtual auto initSensors() -> int = 0;
+        virtual auto querySensor() -> double = 0;
 
-        int getNumSensors();
+        auto getNumSensors() -> int;
 
         // Get array of non owning pointers for sensors (keeps ownership in SensorManager)
-        std::vector<Sensor *> getSensors();
+        auto getSensors() -> std::vector<Sensor *>;
 
 
     private:
-        std::vector<std::unique_ptr<Sensor>> sensors;
+        std::vector<std::unique_ptr<Sensor>> sensors_;
 };

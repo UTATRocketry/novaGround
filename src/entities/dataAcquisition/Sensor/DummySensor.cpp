@@ -1,17 +1,14 @@
-#pragma once
 #include "DummySensor.h"
-
+#include <random>
 
 DummySensor::DummySensor() {
-    const double lower = 10;
-    const double upper = 100;
-    const std::uniform_real_distribution<double> unif(lower, upper);
-    const std:: default_random_engine re;
+    const std::uniform_real_distribution<double> unif(10, 100);
+    const std::default_random_engine r_eng;
 
-    this->re = re;
-    this->unif = unif;
+    this->r_eng_ = r_eng;
+    this->unif_ = unif;
 }
 
-double DummySensor::readData() {
-    return this->unif(this->re);
+auto DummySensor::readData() -> double{
+    return this->unif_(this->r_eng_);
 }

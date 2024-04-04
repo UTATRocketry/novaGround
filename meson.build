@@ -24,7 +24,7 @@ if clangtidy.found()
             clangtidy,
             '--config-file', meson.source_root() + '/.clang-tidy',
             '-p', meson.build_root(),
-            '-fix'
+            '-fix-errors'
         ] + src)
 endif
 
