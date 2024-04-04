@@ -1,7 +1,7 @@
 #include "DummySensor.h"
 
 
-DummySensor::DummySensor(std::map<std::string, std::string> args) {
+dummy_Sensor::dummy_Sensor() {
     double lower = 10;
     double upper = 100;
     std::uniform_real_distribution<double> unif(lower, upper);
@@ -11,6 +11,6 @@ DummySensor::DummySensor(std::map<std::string, std::string> args) {
     this->unif = unif;
 }
 
-double DummySensor::readData() {
+double dummy_Sensor::readData() {
     return this->unif(this->re);
 }

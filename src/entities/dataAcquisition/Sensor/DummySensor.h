@@ -3,9 +3,9 @@
 #include <random>
 #include "Sensor.h"
 
-class DummySensor : Sensor {
+class dummy_Sensor : Sensor {
     public:
-        DummySensor(std::map<std::string, std::string> args);
+        dummy_Sensor();
         double readData() override;
 
     private:
