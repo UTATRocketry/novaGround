@@ -3,10 +3,12 @@
 #include "Sensor.h"
 #include <random>
 
-class DummySensor : Sensor {
+class DummySensor : private Sensor {
   public:
-    DummySensor();
+    DummySensor(int id) : Sensor(id) {};
     auto readData() -> double override;
+
+    int id;
 
   private:
     std::uniform_real_distribution<double> unif_;
