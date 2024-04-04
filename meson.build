@@ -13,19 +13,34 @@ daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 src = []
 subdir('src')
 
-#### Gotta figure out how to make this work
+#### TODO: Set the clang-tidy and clang-format paths as env variables
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
 clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-format', required: false)
 
-if clangtidy.found()
-    run_target(
-        'tidy',
-        command: [
-            clangtidy,
-            '--config-file', meson.source_root() + '/.clang-tidy',
-            '-p', meson.build_root(),
-            '-fix-errors'
-        ] + src)
+# if clangtidy.found()
+#     message('Running Clang Tidy')
+#     tidy = run_command([
+#             clangtidy,
+#             '--config-file', meson.source_root() + '/.clang-tidy',
+#             '-p', meson.build_root(),
+#             '-fix-errors'
+#     ] + src,
+#     check: true)
+#     message(tidy.stderr())
+#     message('Clang Tidy Complete')
+# endif
+
+if clangformat.found()
+    message('Running Clang Format')
+    format = run_command([
+            clangformat,
+            '-style', 'file',
+            # '--config-file', meson.source_root() + '/.clang-format',
+            '-i'
+    ] + src,
+    check: false)
+    message(format.stderr())
+    message('Clang Tidy Complete')
 endif
 
 
