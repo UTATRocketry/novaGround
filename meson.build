@@ -4,6 +4,15 @@ include_directories('/usr/local/include')
 
 # MCC Daq libraries
 cpp = meson.get_compiler('cpp')
-daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib')
+daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 
-executable('novaGround', ['main.cpp', 'src/mccdaq.cpp', 'src/mccdaq.h', 'src/dummysensor.cpp', 'src/dummysensor.h'], dependencies: daqlib)
+#### Grab source files
+
+src = []
+subdir('src')
+
+if daqlib.found()
+    executable('novaGround', src, dependencies: daqlib)
+else
+    executable('novaGround', src, dependencies: daqlib)
+endif

@@ -1,0 +1,1 @@
+src += files('Sensor/DummySensor.cpp', 'Sensor/DummySensor.h', 'Sensor/DummySensor.h', 'SensorManager/SensorManager.h')

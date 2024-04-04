@@ -3,5 +3,5 @@
 
 class Sensor {
     public:
-        virtual double read_data();
+        virtual double readData();
 };
