@@ -1,7 +1,8 @@
 #include "DummySensor.h"
+#include "src/entities/dataAcquisition/Sensor/Sensor.h"
 #include <random>
 
-DummySensor::DummySensor() {
+DummySensor::DummySensor(int id) : Sensor(id) {
     const std::uniform_real_distribution<double> unif(10, 100);
     const std::default_random_engine r_eng;
 

@@ -1,7 +1,6 @@
-template <typename StateType>
-class Actuator {
+template <typename StateType> class Actuator {
   public:
-    Actuator(int id) {this->id = id;};
+    explicit Actuator(int id) { this->id = id; };
 
     virtual auto setActuatorState(StateType state) -> int = 0;
 

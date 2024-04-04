@@ -5,7 +5,7 @@
 
 class DummySensor : private Sensor {
   public:
-    DummySensor(int id) : Sensor(id) {};
+    explicit DummySensor(int id);
     auto readData() -> double override;
 
     int id;
