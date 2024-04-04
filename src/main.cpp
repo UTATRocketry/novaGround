@@ -4,9 +4,9 @@
 #include "entities/dataAcquisition/Sensor/DummySensor.h"
 
 int main(){
-	std::cout << "TEST123" << std::endl;
-	dummy_Sensor *test = new dummy_Sensor();
+	std::cout << "TEST123" << "\n";
+	DummySensor *test = new DummySensor();
 
-	std::cout << test->readData() << std::endl;
+	std::cout << test->readData() << "\n";
 	delete test;
 }

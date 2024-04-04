@@ -1,11 +1,13 @@
+#pragma once
+
 #include <iostream>
 #include <vector>
 #include <random>
 #include "Sensor.h"
 
-class dummy_Sensor : Sensor {
+class DummySensor : Sensor {
     public:
-        dummy_Sensor();
+        DummySensor();
         double readData() override;
 
     private:

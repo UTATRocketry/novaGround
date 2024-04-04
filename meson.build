@@ -13,16 +13,21 @@ daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 src = []
 subdir('src')
 
+#### Gotta figure out how to make this work
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
+clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-format', required: false)
+
 if clangtidy.found()
     run_target(
         'tidy',
         command: [
             clangtidy,
-            '-checks=*',
-            '-p', meson.build_root()
+            '--config-file', meson.source_root() + '/.clang-tidy',
+            '-p', meson.build_root(),
+            '-fix'
         ] + src)
 endif
+
 
 deps = []
 
