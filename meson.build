@@ -1,6 +1,5 @@
 project('Nova Ground', 'cpp', version: '0.0.1', default_options : ['cpp_std=c++20'])
 add_global_arguments(language: 'cpp')
-include_directories('/usr/local/include')
 
 # MCC Daq libraries
 cpp = meson.get_compiler('cpp')
