@@ -1,18 +1,21 @@
-#include <chrono>
-#include <thread>
+#include "entities/control/Actuator/DummyActuator.h"
+#include "entities/dataAcquisition/Sensor/DummySensor.h"
 #include <iostream>
-#include <daqhats/daqhats.h>
 
+auto main() -> int {
+    std::cout << "TEST12356"
+              << "\n";
 
-int main(){
-	std::cout << hat_list(0, NULL);
-	
-	int frequency = 10; //measured in Hertz
-	unsigned int loop_repeats= 100; 
-	int i = 1;
-	while(i<=loop_upper_bound){
-		std::cout<<"Sample "<<i<<std::endl; 	
-		std::this_thread::sleep_for(std::chrono::milliseconds(1000/frequency)); 	
-		i++; 	
-	}
-}	
+    auto* sensor = new DummySensor(1);
+    auto* actuator = new DummyActuator(2);
+
+    int i{0};
+
+    while (i++ < 100) {
+        actuator->setActuatorState(i % 2 == 0);
+        std::cout << sensor->readData() << "\n";
+    };
+
+    delete sensor;
+    delete actuator;
+}
