@@ -17,7 +17,7 @@ This will set up the build directory `build`. To compile, run the following:
 ```
 The `-C` flag specifies which build directory to use.
 
-### Using clang-tidy
+### Using clang-tidy (note still trying to make this work)
 There is a `.clang_tidy` file in the directory that will perform linting on our code. Meson will automatically run this if you have `clang-tidy` available on your system. On mac this can be done by first making sure `llvm` is installed:
 ```
     brew install llvm
