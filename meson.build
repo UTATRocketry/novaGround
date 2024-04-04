@@ -7,9 +7,22 @@ cpp = meson.get_compiler('cpp')
 # clang = cpp.find_clang()
 daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 
+
+
 #### Grab source files
 src = []
 subdir('src')
+
+clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
+if clangtidy.found()
+    run_target(
+        'tidy',
+        command: [
+            clangtidy,
+            '-checks=*',
+            '-p', meson.build_root()
+        ] + src)
+endif
 
 deps = []
 
