@@ -5,6 +5,8 @@
 auto main() -> int {
 	std::cout << "TEST12356"
 			<< "\n";
+
+
 	auto* sensor = new DummySensor(1);
 	auto* actuator = new DummyActuator(2);
 

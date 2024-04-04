@@ -1,8 +1,8 @@
-#include "BoolActuator.h"
+#include "Actuator.h"
 
-class DummyActuator : private BoolActuator {
+class DummyActuator : private Actuator<bool> {
   public:
-    DummyActuator(int id) : BoolActuator(int id) {};
+    DummyActuator(int id) : Actuator(id) {};
     auto setActuatorState(bool state) -> int override;
 
     int id;
