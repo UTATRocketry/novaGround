@@ -13,35 +13,33 @@ auto main() -> int {
     }
     gpioSetMode(23, PI_OUTPUT);
 
-    auto* rel_18 = new RelayActuator(0, 18,);
+    auto* rel_18 = new RelayActuator(0, 18);
     auto* rel_23 = new RelayActuator(0, 23);
     auto* rel_24 = new RelayActuator(0, 24);
     auto* rel_25 = new RelayActuator(0, 25);
     auto* rel_8 = new RelayActuator(0, 8);
-    auto* relay_actuator = new RelayActuator(0, 12);
-    auto* relay_actuator = new RelayActuator(0, 16);
-    auto* relay_actuator = new RelayActuator(0, 20);
-
-
+    auto* rel_12 = new RelayActuator(0, 12);
+    auto* rel_16 = new RelayActuator(0, 16);
+    auto* rel_20 = new RelayActuator(0, 20);
 
     auto* sensor = new DummySensor(1);
     auto* actuator = new DummyActuator(2);
 
-    int i{0};
-
-    relay_actuator->setActuatorState(true);
-
-    while (i++ < 100) {
-        // std::cout << "ACTUATION" << i%2 == 0 << '\n';s
-        // actuator->setActuatorState(i % 2 == 0);
-        relay_actuator->setActuatorState((bool)(i%2 ==0));
-        // std::cout << sensor->readData() << "\n";
+    int i {0};
+    while (++i < 100){
+        rel_23->setActuatorState((bool)(i%2)); 
         sleep(1);
-    };
+    }
 
-    relay_actuator->setActuatorState(false);
 
-    delete relay_actuator;
+    delete rel_18;
+    delete rel_23;
+    delete rel_24;
+    delete rel_25;
+    delete rel_8;
+    delete rel_12 ;
+    delete rel_16;
+    delete rel_20;
     delete sensor;
     delete actuator;
 
