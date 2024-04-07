@@ -1,3 +1,5 @@
+#pragma once
+
 template <typename StateType> class Actuator {
   public:
     explicit Actuator(int id) { this->id = id; };

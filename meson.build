@@ -3,8 +3,9 @@ add_global_arguments(language: 'cpp')
 
 # MCC Daq libraries
 cpp = meson.get_compiler('cpp')
-# clang = cpp.find_clang()
+
 daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
+gpiolib = cpp.find_library('pigpio', dirs: '/usr/local/lib', required: false)
 
 #### Grab source files
 src = []
@@ -14,20 +15,20 @@ subdir('src')
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
 clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-format', required: false)
 
-if clangtidy.found()
-    message('Running Clang Tidy')
-    tidy = run_command([
-            clangtidy,
-            '--config-file', meson.source_root() + '/.clang-tidy',
-            '-p', meson.build_root(),
-            '-fix-errors'
-    ] + src,
-    check: false)
-    message(tidy.stderr())
-    message('Clang Tidy Complete')
-else
-    message('Could not find clang-tidy')
-endif
+#if clangtidy.found()
+#    message('Running Clang Tidy')
+#    tidy = run_target('tidy', [
+#            clangtidy,
+#            '--config-file', meson.source_root() + '/.clang-tidy',
+#            '-p', meson.build_root(),
+#            '-fix-errors'
+#    ] + src,
+#    check: false)
+#    message(tidy.stderr())
+#    message('Clang Tidy Complete')
+#else
+#    message('Could not find clang-tidy')
+#endif
 
 if clangformat.found()
     message('Running Clang Format')
@@ -49,7 +50,11 @@ deps = []
 
 #### Check for library import success
 if daqlib.found()
-    dependencies += daqlib
+    deps += daqlib
+endif
+
+if gpiolib.found()
+    deps += gpiolib
 endif
 
 executable('novaGround', sources : src, dependencies: deps)
