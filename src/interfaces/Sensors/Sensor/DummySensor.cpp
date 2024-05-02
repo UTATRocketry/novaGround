@@ -1,5 +1,5 @@
 #include "DummySensor.h"
-#include "src/entities/dataAcquisition/Sensor/Sensor.h"
+#include "Sensor.h"
 #include <random>
 
 DummySensor::DummySensor(int id) : Sensor(id) {
