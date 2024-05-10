@@ -1,2 +1,2 @@
-subdir('Sensors')
-subdir('Actuators')
+subdir('SensorInterface')
+subdir('ActuatorInterface')
