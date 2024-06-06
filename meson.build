@@ -13,24 +13,26 @@ include = []
 subdir('src')
 
 
-# #### TODO: Set the clang-tidy and clang-format paths as env variables
+#### TODO: Set the clang-tidy and clang-format paths as env variables
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
 clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-format', required: false)
 
-# if clangtidy.found()
-#     message('Running Clang Tidy')
-#     tidy = run_command([
-#             clangtidy,
-#             '--config-file', meson.source_root() + '/.clang-tidy',
-#             '-p', meson.build_root(),
-#             '-fix-errors'
-#     ] + src,
-#     check: false)
-#     message(tidy.stderr())
-#     message('Clang Tidy Complete')
-# else
-#     message('Could not find clang-tidy')
-# endif
+
+if clangtidy.found()
+    message('Running Clang Tidy')
+    tidy = run_command([
+            clangtidy,
+            '--config-file', meson.source_root() + '/.clang-tidy',
+            '-p', meson.build_root(),
+            '-fix-errors'
+    ] + src,
+    check: false)
+    message(tidy.stderr())
+    message('Clang Tidy Complete')
+else
+    message('Could not find clang-tidy')
+endif
+
 
 if clangformat.found()
     message('Running Clang Format')
