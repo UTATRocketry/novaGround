@@ -14,10 +14,10 @@ auto main() -> int {
     std::tuple<int, std::string, bool> const actuator_three{2, "Actuator Three",
                                                             true};
 
-    std::vector<std::tuple<int, std::string, bool>> actuatorParams = {
+    std::vector<std::tuple<int, std::string, bool>> actuatorParams{
         actuator_one, actuator_two, actuator_three};
 
-    DummyActuatorManager dummyActuator = DummyActuatorManager(actuatorParams);
+    auto dummyActuator = DummyActuatorManager(actuatorParams);
 
     std::vector<std::tuple<int, std::string, double, double>> sensorParams{
         {0, "Sensor One", 0, 10},
