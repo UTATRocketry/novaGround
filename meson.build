@@ -8,6 +8,7 @@ daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 
 #### Grab source files
 src = []
+
 include = []
 
 subdir('src')
@@ -16,6 +17,7 @@ subdir('src')
 #### TODO: Set the clang-tidy and clang-format paths as env variables
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
 clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-format', required: false)
+
 
 
 if clangtidy.found()
