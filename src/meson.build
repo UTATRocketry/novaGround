@@ -1,2 +1,3 @@
-subdir('entities')
+subdir('interfaces')
+
 src += files('main.cpp')

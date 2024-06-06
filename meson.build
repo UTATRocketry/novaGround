@@ -8,11 +8,17 @@ daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 
 #### Grab source files
 src = []
+
+include = []
+
 subdir('src')
 
-# #### TODO: Set the clang-tidy and clang-format paths as env variables
+
+#### TODO: Set the clang-tidy and clang-format paths as env variables
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)
 clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-format', required: false)
+
+
 
 if clangtidy.found()
     message('Running Clang Tidy')
@@ -28,6 +34,7 @@ if clangtidy.found()
 else
     message('Could not find clang-tidy')
 endif
+
 
 if clangformat.found()
     message('Running Clang Format')
@@ -52,4 +59,4 @@ if daqlib.found()
     dependencies += daqlib
 endif
 
-executable('novaGround', sources : src, dependencies: deps)
+executable('novaGround', sources : src, dependencies: deps, include_directories: include)
