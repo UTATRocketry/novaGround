@@ -9,18 +9,18 @@
 
 auto main() -> int {
 
+#ifdef WIRINGPI_AVAILABLE
     Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
+    pwm.begin();
     pwm.setPWMFreq(60.0);
 
     while (true) {
-        pwm.setPWM(0, 0, 370);
-        usleep(1'000'000);
-        pwm.setPWM(0, 0, 415);
-        usleep(1'000'000);
-        pwm.setPWM(0, 0, 460);
-        usleep(1'000'000);
-        pwm.setPWM(0, 0, 415);
-        usleep(1'000'000);
+        for (uint16_t i = 0; i < 4096; i += 8) {
+            for (uint8_t pwmnum = 0; pwmnum < 16; pwmnum++) {
+                pwm.setPWM(pwmnum, 0, (i + (4096 / 16) * pwmnum) % 4096);
+            }
+        }
     }
+#endif
 }

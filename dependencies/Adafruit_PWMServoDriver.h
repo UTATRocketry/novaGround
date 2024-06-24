@@ -1,5 +1,6 @@
 #pragma once
 
+#ifdef WIRINGPI_AVAILABLE
 /*!
  *  @file Adafruit_PWMServoDriver.h
  *
@@ -92,3 +93,5 @@ class Adafruit_PWMServoDriver {
     void write8(uint8_t addr, uint8_t d);
     void delay(int ms);
 };
+
+#endif

@@ -23,20 +23,20 @@ clangformat = find_program('clang-format', '/usr/local/Cellar/llvm/17.0.6_1/bin/
 
 
 
-# if clangtidy.found()
-#     message('Running Clang Tidy')
-#     tidy = run_command([
-#             clangtidy,
-#             '--config-file', meson.source_root() + '/.clang-tidy',
-#             '-p', meson.build_root(),
-#             '-fix-errors'
-#     ] + src,
-#     check: false)
-#     message(tidy.stderr())
-#     message('Clang Tidy Complete')
-# else
-#     message('Could not find clang-tidy')
-# endif
+if clangtidy.found()
+    message('Running Clang Tidy')
+    tidy = run_command([
+            clangtidy,
+            '--config-file', meson.source_root() + '/.clang-tidy',
+            '-p', meson.build_root(),
+            '-fix-errors'
+    ] + src,
+    check: false)
+    message(tidy.stderr())
+    message('Clang Tidy Complete')
+else
+    message('Could not find clang-tidy')
+endif
 
 
 if clangformat.found()
@@ -64,6 +64,7 @@ endif
 
 if wiringPi.found()
     deps += wiringPi
+    add_project_arguments('-DWIRINGPI_AVAILABLE', language: 'cpp')
 endif
 
 executable('novaGround', sources : src, dependencies: deps, include_directories: include)
