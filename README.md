@@ -37,3 +37,5 @@ Then you can set up an alias in `~/.zshrc` or `~/.bashrc` depending on what shel
     # For bash
     echo "alias clang-tidy=\"/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy\"" >> ~/.bashrc
 ``` -->
+## Testing
+In order to run the program, a mqtt broker must be set up and running on port `1883`
