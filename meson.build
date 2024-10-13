@@ -5,11 +5,12 @@ add_global_arguments(language: 'cpp')
 cpp = meson.get_compiler('cpp')
 # clang = cpp.find_clang()
 daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
+boost_dep = dependency('boost')
 
 #### Grab source files
 src = []
 
-include = []
+include = ['include']
 
 subdir('src')
 
@@ -52,7 +53,7 @@ else
 endif
 
 
-deps = []
+deps = [boost_dep]
 
 #### Check for library import success
 if daqlib.found()
