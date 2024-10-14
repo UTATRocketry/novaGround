@@ -1,5 +1,4 @@
-//#include "interfaces/ActuatorInterface/ActuatorManager/DummyActuatorManager.h"
-//#include "interfaces/SensorInterface/SensorManager/DummySensorManager.h"
+#include "interfaces/SensorInterface/SensorManager/DummySensorManager.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -16,14 +15,10 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/thread/shared_mutex.hpp>
 
 constexpr auto use_nothrow_awaitable =
     boost::asio::as_tuple(boost::asio::use_awaitable);
-
-int next_sensor_reading() {
-    srand(static_cast<unsigned int>(std::time(0)));
-    return rand() % 100;
-}
 
 using client_type =
     async_mqtt5::mqtt_client<boost::asio::ip::tcp::socket>; // use tcp
@@ -80,24 +75,32 @@ boost::asio::awaitable<void> subscribe_and_receive(client_type& client) {
         std::cout << "Received message from the Broker" << std::endl;
         std::cout << "\t topic: " << topic << std::endl;
         std::cout << "\t payload: " << payload << std::endl;
-        // todo actual implementation
+        // todo actual implementation (spawn coroutine for actuator?)
     }
 
     co_return;
 }
 
-boost::asio::awaitable<void>
-publish(client_type& client, boost::asio::steady_timer& timer) {
+boost::asio::awaitable<void> publish(client_type& client,
+                                     boost::asio::steady_timer& timer,
+                                     DummySensorManager& manager) {
     client.brokers("localhost", 1883).async_run(boost::asio::detached);
 
     for (;;) {
-        // Get the next sensor reading.
-        auto reading = std::to_string(next_sensor_reading());
+        std::string reading = "";
+
+        boost::shared_lock<boost::shared_mutex> lock(manager.mutex);
+        for (std::tuple<int, double>& sensorState : manager.querySensors()) {
+            reading.append(std::format("ID: {}, Value: {} \n",
+                                       std::get<0>(sensorState),
+                                       std::get<1>(sensorState)));
+        }
+        lock.unlock();
 
         // Publish the sensor reading with QoS 1.
         auto&& [ec, rc, props] =
             co_await client.async_publish<async_mqtt5::qos_e::at_least_once>(
-                "b_cmd", reading, async_mqtt5::retain_e::no,
+                "b_telemetry", reading, async_mqtt5::retain_e::no,
                 async_mqtt5::publish_props{}, use_nothrow_awaitable);
 
         if (ec) {
@@ -107,12 +110,12 @@ publish(client_type& client, boost::asio::steady_timer& timer) {
         }
 
         if (!rc)
-            std::cout << "Published sensor reading: " << reading << std::endl;
+            std::cout << "Published sensor reading:\n" << reading << std::endl;
 
         timer.expires_after(std::chrono::milliseconds(1000));
         auto&& [tec] = co_await timer.async_wait(use_nothrow_awaitable);
 
-        //timer error
+        // timer error
         if (tec)
             break;
     }
@@ -138,35 +141,24 @@ int main() {
         ioc.stop();
     });
 
+    // instantiate sensors
+    std::vector<std::tuple<int, std::string, double, double>> sensorParams{
+        {0, "Sensor One", 0, 10},
+        {1, "Sensor Two", 10, 20},
+        {2, "Sensor Three", 20, 30},
+    };
+
+    DummySensorManager dummySensorMan = DummySensorManager(sensorParams);
+    // no clue what this is supposed to do?
+    // std::cout << std::get<0>(dummySensorMan.querySensors()[0]);
+
+    // coroutines
     // recv
-    co_spawn(ioc.get_executor(), subscribe_and_receive(client), boost::asio::detached);
+    co_spawn(ioc.get_executor(), subscribe_and_receive(client),
+             boost::asio::detached);
     // send
-    co_spawn(ioc.get_executor(), publish(client, timer),
+    co_spawn(ioc.get_executor(), publish(client, timer, dummySensorMan),
              boost::asio::detached);
 
-    // Start the execution.
     ioc.run();
-    return 0;
 }
-
-// auto main() -> int {
-//     std::vector<std::tuple<int, std::string, double, double>> sensorParams{
-//         {0, "Sensor One", 0, 10},
-//         {1, "Sensor Two", 10, 20},
-//         {2, "Sensor Three", 20, 30},
-//     };
-
-//     DummySensorManager dummySensorMan = DummySensorManager(sensorParams);
-//     std::cout << std::get<0>(dummySensorMan.querySensors()[0]);
-
-//     int i{0};
-//     while (i++ < 1000) {
-//         for (std::tuple<int, double>& sensorState :
-//              dummySensorMan.querySensors()) {
-//             std::cout << "ID:" << std::get<0>(sensorState) << "\n";
-//             std::cout << "Sensor Value" << std::get<1>(sensorState) << "\n";
-//             std::cout << "\n"
-//                       << "\n";
-//         }
-//     }
-// }

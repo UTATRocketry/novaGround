@@ -7,6 +7,8 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <boost/thread/shared_mutex.hpp>
+
 
 template <typename DataType> class SensorManager {
   public:
@@ -25,6 +27,8 @@ template <typename DataType> class SensorManager {
         }
         return sensor_data;
     };
+
+    boost::shared_mutex mutex;
 
   protected:
     std::map<int, std::unique_ptr<Sensor<DataType>>> sensors_;
