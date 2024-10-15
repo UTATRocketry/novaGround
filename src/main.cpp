@@ -1,4 +1,5 @@
 #include "mqtt/async_client.h"
+#include <boost/json.hpp>
 #include <boost/lockfree/spsc_queue.hpp>
 #include <cctype>
 #include <chrono>
@@ -35,12 +36,8 @@ void consumer_func(mqtt::async_client_ptr cli) {
     while (true) {
         auto msg = cli->consume_message();
 
-        if (!msg)
+        if (!msg) {
             continue;
-
-        if (msg->get_topic() == "command" && msg->to_string() == "exit") {
-            cout << "Exit command received" << endl;
-            break;
         }
 
         cout << msg->get_topic() << ": " << msg->to_string() << endl;
@@ -49,11 +46,14 @@ void consumer_func(mqtt::async_client_ptr cli) {
 
 void publisher_func(mqtt::async_client_ptr cli) {
     while (true) {
-        string payload = "";
+        boost::json::array data;
         sensor_datapoint sd;
-        while (sensor_buffer.pop(sd))
-            payload.append(format("ID {} | V {}\n", sd.id, sd.value));
-        cli->publish("novaground/telemetry", payload)->wait();
+        while (sensor_buffer.pop(sd)) {
+            data.push_back({to_string(sd.id), sd.value});
+        }
+        boost::json::value payload = {{"data", data}};
+        string s_payload = boost::json::serialize(payload);
+        cli->publish("novaground/telemetry", s_payload)->wait();
         this_thread::sleep_for(milliseconds(1000));
     }
 }
@@ -66,7 +66,7 @@ void sample_func() {
         sensor_buffer.push(sd);
 
         // sampling frequency
-        this_thread::sleep_for(milliseconds(100));
+        this_thread::sleep_for(milliseconds(10));
     }
 }
 
@@ -88,11 +88,12 @@ int main(int argc, char* argv[]) {
     cli->start_consuming();
 
     auto rsp = cli->connect(connOpts)->get_connect_response();
-    cout << "connected\n" << endl;
+    cout << "connected to mqtt broker\n" << endl;
 
     // Subscribe if this is a new session with the server
-    if (!rsp.is_session_present())
+    if (!rsp.is_session_present()) {
         cli->subscribe(TOPICS, QOS);
+    }
 
     std::thread sample(sample_func);
     std::thread consumer(consumer_func, cli);
@@ -102,11 +103,6 @@ int main(int argc, char* argv[]) {
     publisher.join();
     consumer.join();
 
-    // Disconnect
-
-    cout << "OK\nDisconnecting..." << flush;
     cli->disconnect();
-    cout << "OK" << endl;
-
     return 0;
 }
