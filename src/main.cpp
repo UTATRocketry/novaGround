@@ -1,164 +1,112 @@
-#include "interfaces/SensorInterface/SensorManager/DummySensorManager.h"
-
+#include "mqtt/async_client.h"
+#include <boost/lockfree/spsc_queue.hpp>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <format>
 #include <iostream>
+#include <memory>
+#include <random>
 #include <string>
-#include <tuple>
-#include <vector>
+#include <thread>
 
-#include <async_mqtt5.hpp>
-#include <boost/asio/as_tuple.hpp>
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/signal_set.hpp>
-#include <boost/asio/use_awaitable.hpp>
-#include <boost/thread/shared_mutex.hpp>
+using namespace std;
+using namespace std::chrono;
 
-constexpr auto use_nothrow_awaitable =
-    boost::asio::as_tuple(boost::asio::use_awaitable);
+const std::string CLIENT_ID("novaground");
 
-using client_type =
-    async_mqtt5::mqtt_client<boost::asio::ip::tcp::socket>; // use tcp
+struct sensor_datapoint {
+    int id;
+    double value;
+};
 
-boost::asio::awaitable<bool> subscribe(client_type& client) {
-    // Configure the request to subscribe to a Topic.
-    async_mqtt5::subscribe_topic sub_topic = async_mqtt5::subscribe_topic{
-        "b_cmd",
-        async_mqtt5::subscribe_options{
-            async_mqtt5::qos_e::exactly_once, // All messages will arrive at
-                                              // QoS 2.
-            async_mqtt5::no_local_e::no, // Forward message from Clients with
-                                         // same ID.
-            async_mqtt5::retain_as_published_e::retain, // Keep the original
-                                                        // RETAIN flag.
-            async_mqtt5::retain_handling_e::send // Send retained messages when
-                                                 // the subscription is
-                                                 // established.
-        }};
+boost::lockfree::spsc_queue<sensor_datapoint> sensor_buffer{8192};
 
-    // Subscribe to a single Topic.
-    auto&& [ec, sub_codes, sub_props] = co_await client.async_subscribe(
-        sub_topic, async_mqtt5::subscribe_props{}, use_nothrow_awaitable);
+double get_sensor() {
+    std::default_random_engine rnd{std::random_device{}()};
+    std::uniform_real_distribution<double> dist(0, 100);
 
-    if (ec)
-        std::cout << "Subscribe error occurred: " << ec.message() << std::endl;
-
-    co_return !ec &&
-        !sub_codes[0]; // True if the subscription was successfully established.
+    return dist(rnd);
 }
 
-boost::asio::awaitable<void> subscribe_and_receive(client_type& client) {
-    client.brokers("localhost", 1883).async_run(boost::asio::detached);
+// recv
+void consumer_func(mqtt::async_client_ptr cli) {
+    while (true) {
+        auto msg = cli->consume_message();
 
-    if (!(co_await subscribe(client)))
-        co_return;
+        if (!msg)
+            continue;
 
-    for (;;) {
-        // Receive an Appplication Message from the subscribed Topic(s).
-        auto&& [ec, topic, payload, publish_props] =
-            co_await client.async_receive(use_nothrow_awaitable);
-
-        if (ec == async_mqtt5::client::error::session_expired) {
-            // The Client has reconnected, and the prior session has expired.
-            // As a result, any previous subscriptions have been lost and must
-            // be reinstated.
-            if (co_await subscribe(client))
-                continue;
-            else
-                break;
-        } else if (ec)
-            break;
-
-        std::cout << "Received message from the Broker" << std::endl;
-        std::cout << "\t topic: " << topic << std::endl;
-        std::cout << "\t payload: " << payload << std::endl;
-        // todo actual implementation (spawn coroutine for actuator?)
-    }
-
-    co_return;
-}
-
-boost::asio::awaitable<void> publish(client_type& client,
-                                     boost::asio::steady_timer& timer,
-                                     DummySensorManager& manager) {
-    client.brokers("localhost", 1883).async_run(boost::asio::detached);
-
-    for (;;) {
-        std::string reading = "";
-
-        boost::shared_lock<boost::shared_mutex> lock(manager.mutex);
-        for (std::tuple<int, double>& sensorState : manager.querySensors()) {
-            reading.append(std::format("ID: {}, Value: {} \n",
-                                       std::get<0>(sensorState),
-                                       std::get<1>(sensorState)));
-        }
-        lock.unlock();
-
-        // Publish the sensor reading with QoS 1.
-        auto&& [ec, rc, props] =
-            co_await client.async_publish<async_mqtt5::qos_e::at_least_once>(
-                "b_telemetry", reading, async_mqtt5::retain_e::no,
-                async_mqtt5::publish_props{}, use_nothrow_awaitable);
-
-        if (ec) {
-            std::cout << "Publish error occurred: " << ec.message()
-                      << std::endl;
+        if (msg->get_topic() == "command" && msg->to_string() == "exit") {
+            cout << "Exit command received" << endl;
             break;
         }
 
-        if (!rc)
-            std::cout << "Published sensor reading:\n" << reading << std::endl;
-
-        timer.expires_after(std::chrono::milliseconds(1000));
-        auto&& [tec] = co_await timer.async_wait(use_nothrow_awaitable);
-
-        // timer error
-        if (tec)
-            break;
+        cout << msg->get_topic() << ": " << msg->to_string() << endl;
     }
-
-    co_return;
 }
 
-int main() {
-    // context
-    boost::asio::io_context ioc;
-    client_type client(ioc);
+void publisher_func(mqtt::async_client_ptr cli) {
+    while (true) {
+        string payload = "";
+        sensor_datapoint sd;
+        while (sensor_buffer.pop(sd))
+            payload.append(format("ID {} | V {}\n", sd.id, sd.value));
+        cli->publish("novaground/telemetry", payload)->wait();
+        this_thread::sleep_for(milliseconds(1000));
+    }
+}
 
-    // global timer (system)
-    boost::asio::steady_timer timer(ioc);
+void sample_func() {
+    while (true) {
+        sensor_datapoint sd;
+        sd.id = 0;
+        sd.value = get_sensor();
+        sensor_buffer.push(sd);
 
-    // signals for stop
-    boost::asio::signal_set signals(ioc, SIGINT, SIGTERM);
+        // sampling frequency
+        this_thread::sleep_for(milliseconds(100));
+    }
+}
 
-    signals.async_wait([&ioc](async_mqtt5::error_code, int /* signal */) {
-        // After we are done with publishing all the messages, cancel the
-        // timer and the client. Alternatively, use
-        // mqtt_client::async_disconnect.
-        ioc.stop();
-    });
+int main(int argc, char* argv[]) {
+    string address = "mqtt://localhost:1883";
 
-    // instantiate sensors
-    std::vector<std::tuple<int, std::string, double, double>> sensorParams{
-        {0, "Sensor One", 0, 10},
-        {1, "Sensor Two", 10, 20},
-        {2, "Sensor Three", 20, 30},
-    };
+    // Create an MQTT client using a smart pointer to be shared among threads.
+    auto cli = std::make_shared<mqtt::async_client>(address, CLIENT_ID);
 
-    DummySensorManager dummySensorMan = DummySensorManager(sensorParams);
-    // no clue what this is supposed to do?
-    // std::cout << std::get<0>(dummySensorMan.querySensors()[0]);
+    // Connect options for a persistent session and automatic reconnects.
+    auto connOpts = mqtt::connect_options_builder()
+                        .clean_session(false)
+                        .automatic_reconnect(seconds(2), seconds(30))
+                        .finalize();
 
-    // coroutines
-    // recv
-    co_spawn(ioc.get_executor(), subscribe_and_receive(client),
-             boost::asio::detached);
-    // send
-    co_spawn(ioc.get_executor(), publish(client, timer, dummySensorMan),
-             boost::asio::detached);
+    auto TOPICS = mqtt::string_collection::create({"novaground/command"});
+    const vector<int> QOS{1};
 
-    ioc.run();
+    cli->start_consuming();
+
+    auto rsp = cli->connect(connOpts)->get_connect_response();
+    cout << "connected\n" << endl;
+
+    // Subscribe if this is a new session with the server
+    if (!rsp.is_session_present())
+        cli->subscribe(TOPICS, QOS);
+
+    std::thread sample(sample_func);
+    std::thread consumer(consumer_func, cli);
+    std::thread publisher(publisher_func, cli);
+
+    sample.join();
+    publisher.join();
+    consumer.join();
+
+    // Disconnect
+
+    cout << "OK\nDisconnecting..." << flush;
+    cli->disconnect();
+    cout << "OK" << endl;
+
+    return 0;
 }
