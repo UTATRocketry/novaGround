@@ -8,7 +8,6 @@
 #include <cstring>
 #include <daqhats/daqhats.h>
 #include <daqhats/mcc128.h>
-#include <format>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -97,7 +96,7 @@ void publisher_func(mqtt::async_client_ptr cli) {
         while (sensor_buffer.pop(sd)) {
             data.push_back({to_string(sd.id), sd.value, sd.time});
         }
-        boost::json::value payload = {{"data", data}};
+        boost::json::value payload = {{"sensors", data}, {"actuators", {}}};
         string s_payload = boost::json::serialize(payload);
         cli->publish("novaground/telemetry", s_payload)->wait();
         this_thread::sleep_for(milliseconds(1000));
@@ -109,9 +108,9 @@ void sample_func(vector<int> daq_ids) {
     while (true) {
         for (auto id : daq_ids) {
             sensor_datapoint sd;
-            sd.id = id;
+            sd.id = 0;
             const auto p1 = std::chrono::system_clock::now();
-            sd.value = get_daq_value(0, id);
+            sd.value = get_daq_value(id, 0);
             sd.time = std::chrono::duration_cast<std::chrono::seconds>(
                           p1.time_since_epoch())
                           .count();
@@ -125,7 +124,7 @@ void sample_func(vector<int> daq_ids) {
 
 int main(int argc, char* argv[]) {
     vector<int> daq_ids = initialize_daqs();
-
+    mcc128_open(0);
     string address = "mqtt://localhost:1883";
 
     // Create an MQTT client using a smart pointer to be shared among threads.
@@ -150,7 +149,7 @@ int main(int argc, char* argv[]) {
         cli->subscribe(TOPICS, QOS);
     }
 
-    std::thread sample(sample_func(daq_ids));
+    std::thread sample(sample_func, daq_ids);
     std::thread consumer(consumer_func, cli);
     std::thread publisher(publisher_func, cli);
 

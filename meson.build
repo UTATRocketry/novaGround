@@ -60,7 +60,7 @@ deps = [boost_dep,libpaho]
 
 #### Check for library import success
 if daqlib.found()
-    dependencies += daqlib
+    deps += daqlib
 endif
 
 executable('novaGround', sources : src, dependencies: deps, include_directories: include)
