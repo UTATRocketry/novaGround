@@ -103,14 +103,14 @@ void publisher_func(mqtt::async_client_ptr cli) {
     }
 }
 
-// data sampling thread
-void sample_func(vector<int> daq_ids) {
+// data sampling thread (only samples on address 0 so far)
+void sample_func(vector<int> daq_chan) {
     while (true) {
-        for (auto id : daq_ids) {
+        for (auto c : daq_chan) {
             sensor_datapoint sd;
-            sd.id = 0;
+            sd.id = c;
             const auto p1 = std::chrono::system_clock::now();
-            sd.value = get_daq_value(id, 0);
+            sd.value = get_daq_value(0, c);
             sd.time = std::chrono::duration_cast<std::chrono::seconds>(
                           p1.time_since_epoch())
                           .count();
@@ -123,8 +123,10 @@ void sample_func(vector<int> daq_ids) {
 }
 
 int main(int argc, char* argv[]) {
-    vector<int> daq_ids = initialize_daqs();
-    mcc128_open(0);
+    vector<int> daq_chan = {0, 1, 2, 3, 4, 5, 6, 7};
+    // vector of DAQ Channels to read
+    mcc128_open(0); // open DAQ
+
     string address = "mqtt://localhost:1883";
 
     // Create an MQTT client using a smart pointer to be shared among threads.
@@ -149,7 +151,7 @@ int main(int argc, char* argv[]) {
         cli->subscribe(TOPICS, QOS);
     }
 
-    std::thread sample(sample_func, daq_ids);
+    std::thread sample(sample_func, daq_chan);
     std::thread consumer(consumer_func, cli);
     std::thread publisher(publisher_func, cli);
 
