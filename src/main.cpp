@@ -1,6 +1,6 @@
 #include "mqtt/async_client.h"
 #include <boost/json.hpp>
-#include <boost/lockfree/spsc_queue.hpp>
+#include <boost/thread/shared_mutex.hpp>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -25,7 +25,8 @@ struct sensor_datapoint {
     double time;
 };
 
-boost::lockfree::spsc_queue<sensor_datapoint> sensor_buffer{8192};
+vector<sensor_datapoint> data;
+boost::shared_mutex _data_access;
 
 std::vector<int> initialize_daqs() {
     std::vector<int> connected_daqs;
@@ -91,21 +92,30 @@ void consumer_func(mqtt::async_client_ptr cli) {
 // send
 void publisher_func(mqtt::async_client_ptr cli) {
     while (true) {
-        boost::json::array data;
-        sensor_datapoint sd;
-        while (sensor_buffer.pop(sd)) {
-            data.push_back({to_string(sd.id), sd.value, sd.time});
+        boost::shared_lock<boost::shared_mutex> lock(_data_access); // read lock
+        boost::json::array json_data;
+        for (auto sd : data) {
+            json_data.push_back({to_string(sd.id), sd.value, sd.time});
         }
-        boost::json::value payload = {{"sensors", data}, {"actuators", {}}};
+
+        boost::shared_lock<boost::shared_mutex> unlock_shared(
+            _data_access); // unlock
+
+        boost::json::value payload = {{"sensors", json_data},
+                                      {"actuators", {}}};
         string s_payload = boost::json::serialize(payload);
         cli->publish("novaground/telemetry", s_payload)->wait();
-        this_thread::sleep_for(milliseconds(1000));
+
+        this_thread::sleep_for(milliseconds(100));
     }
 }
 
 // data sampling thread (only samples on address 0 so far)
 void sample_func(vector<int> daq_chan) {
     while (true) {
+        boost::upgrade_lock<boost::shared_mutex> lock(
+            _data_access); // write lock
+        data.clear();
         for (auto c : daq_chan) {
             sensor_datapoint sd;
             sd.id = c;
@@ -114,8 +124,9 @@ void sample_func(vector<int> daq_chan) {
             sd.time = std::chrono::duration_cast<std::chrono::seconds>(
                           p1.time_since_epoch())
                           .count();
-            sensor_buffer.push(sd);
+            data.push(sd);
         }
+        boost::upgrade_lock<boost::shared_mutex> unlock_upgrade(_data_access);
 
         // sampling frequency
         this_thread::sleep_for(milliseconds(10));
