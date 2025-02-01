@@ -95,14 +95,17 @@ void publisher_func(mqtt::async_client_ptr cli) {
         boost::shared_lock<boost::shared_mutex> lock(_data_access); // read lock
         boost::json::array json_data;
         for (auto sd : data) {
-            json_data.push_back({to_string(sd.id), sd.value, sd.time});
+            boost::json::object se;
+            se["id"] = sd.id;
+            se["value"] = sd.value;
+            se["timestamp"] = sd.time;
+            json_data.push_back(se);
         }
-
         boost::shared_lock<boost::shared_mutex> unlock_shared(
             _data_access); // unlock
 
         boost::json::value payload = {{"sensors", json_data},
-                                      {"actuators", {}}};
+                                      {"actuators", boost::json::array()}};
         string s_payload = boost::json::serialize(payload);
         cli->publish("novaground/telemetry", s_payload)->wait();
 
