@@ -1,4 +1,5 @@
 #include "mqtt/async_client.h"
+#include <bitset>
 #include <boost/json.hpp>
 #include <boost/thread/shared_mutex.hpp>
 #include <cctype>
@@ -9,6 +10,7 @@
 #include <daqhats/daqhats.h>
 #include <daqhats/mcc128.h>
 #include <iostream>
+#include <linux/i2c-dev.h>
 #include <memory>
 #include <random>
 #include <string>
@@ -18,6 +20,7 @@ using namespace std;
 using namespace std::chrono;
 
 const std::string CLIENT_ID("novaground");
+const int I2C_ADDR = 0x40;
 
 struct sensor_datapoint {
     int id;
@@ -27,6 +30,9 @@ struct sensor_datapoint {
 
 vector<sensor_datapoint> data;
 boost::shared_mutex _data_access;
+
+bitset<16> relay_state;
+boost::shared_mutex _relay_state_access;
 
 std::vector<int> initialize_daqs() {
     std::vector<int> connected_daqs;
@@ -49,6 +55,21 @@ std::vector<int> initialize_daqs() {
     }
 
     return connected_daqs;
+}
+
+bool pcf8575_write(int fd, bitset<16> bits) {
+    uint8_t buf[2];
+    uint16_t value = bits.to_ulong();
+
+    buf[0] = value & 0xFF;        // Low byte
+    buf[1] = (value >> 8) & 0xFF; // High byte
+
+    if (write(fd, buf, 2) != 2) {
+        // i2c transaction failed
+        cout << "error writing to pcf8575\n";
+    } else {
+        cout << "wrote to pcf8575\n";
+    }
 }
 
 // int close_daqs(std::vector<int> list_of_daqs) {
@@ -77,35 +98,67 @@ double get_daq_value(int address, int channel) {
 }
 
 // recv
-void consumer_func(mqtt::async_client_ptr cli) {
+void consumer_func(mqtt::async_client_ptr cli, int fd) {
     while (true) {
         auto msg = cli->consume_message();
 
         if (!msg) {
             continue;
         }
+        string m_str msg->to_string();
+        cout << msg->get_topic() << ": " << m_str << endl;
 
-        cout << msg->get_topic() << ": " << msg->to_string() << endl;
+        error_code ec;
+        boost::json::value parsed = boost::json::parse(m_str, ec);
+        if (ec) {
+            std::cout << "Parsing failed: " << ec.message() << "\n";
+            continue;
+        }
+        int index = parsed.at("id").as_int8();
+        bool state = parsed.at("is_low").as_bool();
+
+        boost::upgrade_lock<boost::shared_mutex> lock(
+            _relay_state_access); // write lock
+
+        relay_state.set(index, state);
+        pcf8575_write(file, relay_state);
+
+        boost::upgrade_lock<boost::shared_mutex> unlock_upgrade(
+            _relay_state_access);
     }
 }
 
 // send
 void publisher_func(mqtt::async_client_ptr cli) {
     while (true) {
-        boost::shared_lock<boost::shared_mutex> lock(_data_access); // read lock
-        boost::json::array json_data;
+        // read lock
+        boost::shared_lock<boost::shared_mutex> lock(_data_access);
+        boost::json::array json_sensor_data;
         for (auto sd : data) {
             boost::json::object se;
             se["id"] = sd.id;
             se["value"] = sd.value;
             se["timestamp"] = sd.time;
-            json_data.push_back(se);
+            json_sensor_data.push_back(se);
         }
-        boost::shared_lock<boost::shared_mutex> unlock_shared(
-            _data_access); // unlock
+        // unlock
+        boost::shared_lock<boost::shared_mutex> unlock_shared(_data_access);
 
-        boost::json::value payload = {{"sensors", json_data},
-                                      {"actuators", boost::json::array()}};
+        boost::shared_lock<boost::shared_mutex> lock(_relay_state_access);
+        boost::json::array json_relay_data;
+        for (size_t i = 0; i < relay_state.size(); ++i) {
+            boost::json::object se;
+            se["id"] = i;
+            se["state"] = relay_state[i];
+            json_relay_data.push_back(se);
+        }
+
+        boost::shared_lock<boost::shared_mutex> unlock_shared(
+            _relay_state_access);
+
+        boost::json::value payload = {{"sensors", json_sensor_data},
+                                      {"actuators", boost::json::array()},
+                                      {"relays", json_relay_data}};
         string s_payload = boost::json::serialize(payload);
         cli->publish("novaground/telemetry", s_payload)->wait();
 
@@ -137,10 +190,28 @@ void sample_func(vector<int> daq_chan) {
 }
 
 int main(int argc, char* argv[]) {
+    // open DAQ
     vector<int> daq_chan = {0, 1, 2, 3, 4, 5, 6, 7};
-    // vector of DAQ Channels to read
-    mcc128_open(0); // open DAQ
+    mcc128_open(0);
 
+    // open I2C
+    int fd;
+    int adapter_nr = 2; // determine this?
+    char filename[20];
+
+    snprintf(filename, 19, "/dev/i2c-%d", adapter_nr);
+    fd = open(filename, O_RDWR);
+    if (fd < 0) {
+        cout << "failed to open i2c\n";
+        exit(1);
+    }
+
+    if (ioctl(fd, I2C_SLAVE, I2C_ADDR) < 0) {
+        cout << "failed to find i2c addr\n";
+        exit(1);
+    }
+
+    // mqtt
     string address = "mqtt://localhost:1883";
 
     // Create an MQTT client using a smart pointer to be shared among threads.
@@ -166,7 +237,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::thread sample(sample_func, daq_chan);
-    std::thread consumer(consumer_func, cli);
+    std::thread consumer(consumer_func, cli, fd);
     std::thread publisher(publisher_func, cli);
 
     sample.join();
