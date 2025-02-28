@@ -196,10 +196,9 @@ int main(int argc, char* argv[]) {
 
     // open I2C
     int fd;
-    int adapter_nr = 2; // determine this?
     char filename[20];
 
-    snprintf(filename, 19, "/dev/i2c-%d", adapter_nr);
+    snprintf(filename, 19, "/dev/i2c-1");
     fd = open(filename, O_RDWR);
     if (fd < 0) {
         cout << "failed to open i2c\n";
