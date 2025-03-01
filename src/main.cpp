@@ -117,14 +117,12 @@ void consumer_func(mqtt::async_client_ptr cli, int fd) {
         int index = parsed.at("id").as_int8();
         bool state = parsed.at("is_low").as_bool();
 
-        boost::upgrade_lock<boost::shared_mutex> lock(
-            _relay_state_access); // write lock
+        boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
 
         relay_state.set(index, state);
         pcf8575_write(fd, relay_state);
 
-        boost::upgrade_lock<boost::shared_mutex> unlock_upgrade(
-            _relay_state_access);
+        lock.unlock();
     }
 }
 
@@ -132,7 +130,7 @@ void consumer_func(mqtt::async_client_ptr cli, int fd) {
 void publisher_func(mqtt::async_client_ptr cli) {
     while (true) {
         // read lock
-        boost::shared_lock<boost::shared_mutex> lock(_data_access);
+        boost::shared_lock<boost::shared_mutex> lock{_data_access};
         boost::json::array json_sensor_data;
         for (auto sd : data) {
             boost::json::object se;
@@ -141,10 +139,8 @@ void publisher_func(mqtt::async_client_ptr cli) {
             se["timestamp"] = sd.time;
             json_sensor_data.push_back(se);
         }
-        // unlock
-        boost::shared_lock<boost::shared_mutex> unlock_shared(_data_access);
 
-        boost::shared_lock<boost::shared_mutex> lock(_relay_state_access);
+        boost::shared_lock<boost::shared_mutex> lock{_relay_state_access};
         boost::json::array json_relay_data;
         for (size_t i = 0; i < relay_state.size(); ++i) {
             boost::json::object se;
@@ -152,9 +148,6 @@ void publisher_func(mqtt::async_client_ptr cli) {
             se["state"] = relay_state[i];
             json_relay_data.push_back(se);
         }
-
-        boost::shared_lock<boost::shared_mutex> unlock_shared(
-            _relay_state_access);
 
         boost::json::value payload = {{"sensors", json_sensor_data},
                                       {"actuators", boost::json::array()},
@@ -169,8 +162,8 @@ void publisher_func(mqtt::async_client_ptr cli) {
 // data sampling thread (only samples on address 0 so far)
 void sample_func(vector<int> daq_chan) {
     while (true) {
-        boost::upgrade_lock<boost::shared_mutex> lock(
-            _data_access); // write lock
+        boost::unique_lock<boost::shared_mutex> lock{
+            _data_access}; // write lock
         data.clear();
         for (auto c : daq_chan) {
             sensor_datapoint sd;
@@ -182,8 +175,7 @@ void sample_func(vector<int> daq_chan) {
                           .count();
             data.push_back(sd);
         }
-        boost::upgrade_lock<boost::shared_mutex> unlock_upgrade(_data_access);
-
+        lock.unlock();
         // sampling frequency
         this_thread::sleep_for(milliseconds(10));
     }
