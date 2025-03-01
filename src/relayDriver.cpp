@@ -2,6 +2,7 @@
 #include <iostream>
 
 #define I2C_ADDR 0x00 // change this
+#define I2C_REG 0x00 // change this
 #define RELAY_COUNT 16
 
 int handle;
@@ -25,7 +26,7 @@ int relayOn(int channel) {
         return -1;
     }
     relayState &= ~(1 << channel);
-    i2cWriteWordData(handle, 0x09, relayState);
+    i2cWriteWordData(handle, I2C_REG, relayState);
     return 0;
 }
 
@@ -34,7 +35,7 @@ int relayOff(int channel) {
         return -1;
     }
     relayState |= (1 << channel);
-    i2cWriteWordData(handle, 0x09, relayState);
+    i2cWriteWordData(handle, I2C_REG, relayState);
     return 0;
 }
 
