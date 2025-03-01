@@ -67,9 +67,9 @@ bool pcf8575_write(int fd, bitset<16> bits) {
     if (write(fd, buf, 2) != 2) {
         // i2c transaction failed
         cout << "error writing to pcf8575\n";
-    } else {
-        cout << "wrote to pcf8575\n";
+        return false;
     }
+    return true;
 }
 
 // int close_daqs(std::vector<int> list_of_daqs) {
@@ -105,7 +105,7 @@ void consumer_func(mqtt::async_client_ptr cli, int fd) {
         if (!msg) {
             continue;
         }
-        string m_str msg->to_string();
+        string m_str = msg->to_string();
         cout << msg->get_topic() << ": " << m_str << endl;
 
         error_code ec;
@@ -121,7 +121,7 @@ void consumer_func(mqtt::async_client_ptr cli, int fd) {
             _relay_state_access); // write lock
 
         relay_state.set(index, state);
-        pcf8575_write(file, relay_state);
+        pcf8575_write(fd, relay_state);
 
         boost::upgrade_lock<boost::shared_mutex> unlock_upgrade(
             _relay_state_access);
@@ -180,7 +180,7 @@ void sample_func(vector<int> daq_chan) {
             sd.time = std::chrono::duration_cast<std::chrono::seconds>(
                           p1.time_since_epoch())
                           .count();
-            data.push(sd);
+            data.push_back(sd);
         }
         boost::upgrade_lock<boost::shared_mutex> unlock_upgrade(_data_access);
 
