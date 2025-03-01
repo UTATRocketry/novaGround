@@ -1,6 +1,7 @@
 #include "mqtt/async_client.h"
 #include <bitset>
 #include <boost/json.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/thread/shared_mutex.hpp>
 #include <cctype>
 #include <chrono>
@@ -9,12 +10,15 @@
 #include <cstring>
 #include <daqhats/daqhats.h>
 #include <daqhats/mcc128.h>
+#include <fcntl.h>
 #include <iostream>
 #include <linux/i2c-dev.h>
 #include <memory>
 #include <random>
 #include <string>
+#include <sys/ioctl.h>
 #include <thread>
+#include <unistd.h>
 
 using namespace std;
 using namespace std::chrono;
@@ -116,37 +120,40 @@ void consumer_func(mqtt::async_client_ptr cli, int fd) {
         }
         int index = parsed.at("id").as_int8();
         bool state = parsed.at("is_low").as_bool();
+        {
+            boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
 
-        boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
-
-        relay_state.set(index, state);
-        pcf8575_write(fd, relay_state);
-
-        lock.unlock();
+            relay_state.set(index, state);
+            pcf8575_write(fd, relay_state);
+        }
     }
 }
 
 // send
 void publisher_func(mqtt::async_client_ptr cli) {
     while (true) {
-        // read lock
-        boost::shared_lock<boost::shared_mutex> lock{_data_access};
         boost::json::array json_sensor_data;
-        for (auto sd : data) {
-            boost::json::object se;
-            se["id"] = sd.id;
-            se["value"] = sd.value;
-            se["timestamp"] = sd.time;
-            json_sensor_data.push_back(se);
+        boost::json::array json_relay_data;
+
+        {
+            boost::shared_lock<boost::shared_mutex> lock{_data_access};
+            for (const auto& sd : data) {
+                boost::json::object se;
+                se["id"] = sd.id;
+                se["value"] = sd.value;
+                se["timestamp"] = sd.time;
+                json_sensor_data.push_back(se);
+            }
         }
 
-        boost::shared_lock<boost::shared_mutex> lock{_relay_state_access};
-        boost::json::array json_relay_data;
-        for (size_t i = 0; i < relay_state.size(); ++i) {
-            boost::json::object se;
-            se["id"] = i;
-            se["state"] = relay_state[i];
-            json_relay_data.push_back(se);
+        {
+            boost::shared_lock<boost::shared_mutex> lock{_relay_state_access};
+            for (size_t i = 0; i < relay_state.size(); ++i) {
+                boost::json::object se;
+                se["id"] = i;
+                se["state"] = relay_state[i];
+                json_relay_data.push_back(se);
+            }
         }
 
         boost::json::value payload = {{"sensors", json_sensor_data},
@@ -162,9 +169,7 @@ void publisher_func(mqtt::async_client_ptr cli) {
 // data sampling thread (only samples on address 0 so far)
 void sample_func(vector<int> daq_chan) {
     while (true) {
-        boost::unique_lock<boost::shared_mutex> lock{
-            _data_access}; // write lock
-        data.clear();
+        vector<sensor_datapoint> new_data;
         for (auto c : daq_chan) {
             sensor_datapoint sd;
             sd.id = c;
@@ -173,9 +178,12 @@ void sample_func(vector<int> daq_chan) {
             sd.time = std::chrono::duration_cast<std::chrono::seconds>(
                           p1.time_since_epoch())
                           .count();
-            data.push_back(sd);
+            new_data.push_back(sd);
         }
-        lock.unlock();
+        {
+            boost::unique_lock<boost::shared_mutex> lock(_data_access);
+            data = std::move(new_data); // replace with new data atomically
+        }
         // sampling frequency
         this_thread::sleep_for(milliseconds(10));
     }
