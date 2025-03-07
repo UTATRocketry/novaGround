@@ -32,7 +32,7 @@ struct sensor_datapoint {
     double time;
 };
 
-vector<sensor_datapoint> data;
+vector<sensor_datapoint> sensor_data;
 boost::shared_mutex _data_access;
 
 bitset<16> relay_state;
@@ -137,7 +137,7 @@ void publisher_func(mqtt::async_client_ptr cli) {
 
         {
             boost::shared_lock<boost::shared_mutex> lock{_data_access};
-            for (const auto& sd : data) {
+            for (const auto& sd : sensor_data) {
                 boost::json::object se;
                 se["id"] = sd.id;
                 se["value"] = sd.value;
@@ -157,8 +157,7 @@ void publisher_func(mqtt::async_client_ptr cli) {
         }
 
         boost::json::value payload = {{"sensors", json_sensor_data},
-                                      {"actuators", boost::json::array()},
-                                      {"relays", json_relay_data}};
+                                      {"actuators", json_relay_data}};
         string s_payload = boost::json::serialize(payload);
         cli->publish("novaground/telemetry", s_payload)->wait();
 
@@ -182,7 +181,7 @@ void sample_func(vector<int> daq_chan) {
         }
         {
             boost::unique_lock<boost::shared_mutex> lock(_data_access);
-            data = std::move(new_data); // replace with new data atomically
+            sensor_data = std::move(new_data); // replace with new data atomically
         }
         // sampling frequency
         this_thread::sleep_for(milliseconds(10));
