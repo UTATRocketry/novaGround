@@ -118,7 +118,7 @@ void consumer_func(mqtt::async_client_ptr cli, int fd) {
             std::cout << "Parsing failed: " << ec.message() << "\n";
             continue;
         }
-        int index = parsed.at("id").as_int8();
+        int index = parsed.at("id").as_int64();
         bool state = parsed.at("is_low").as_bool();
         {
             boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
