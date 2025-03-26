@@ -24,7 +24,7 @@ using namespace std;
 using namespace std::chrono;
 
 const std::string CLIENT_ID("novaground");
-const int I2C_ADDR = 0x40;
+const int I2C_ADDR = 0x20;
 
 struct sensor_datapoint {
     int id;
@@ -38,9 +38,85 @@ boost::shared_mutex _data_access;
 bitset<16> relay_state;
 boost::shared_mutex _relay_state_access;
 
+class TCA9535 {
+  private:
+    int i2c_fd;
+    uint8_t device_address;
+
+    enum Registers {
+        INPUT_PORT0 = 0x00,
+        INPUT_PORT1 = 0x01,
+        OUTPUT_PORT0 = 0x02,
+        OUTPUT_PORT1 = 0x03,
+        POLARITY_INV0 = 0x04,
+        POLARITY_INV1 = 0x05,
+        CONFIG_PORT0 = 0x06,
+        CONFIG_PORT1 = 0x07
+    };
+
+  public:
+    TCA9535(const char* i2c_bus, uint8_t address) : device_address(address) {
+        // Open I2C bus
+        i2c_fd = open(i2c_bus, O_RDWR);
+        if (i2c_fd < 0) {
+            throw std::runtime_error("Failed to open I2C bus");
+        }
+
+        // Set device address
+        if (ioctl(i2c_fd, I2C_SLAVE, device_address) < 0) {
+            close(i2c_fd);
+            throw std::runtime_error("Failed to set I2C device address");
+        }
+    }
+
+    ~TCA9535() { close(i2c_fd); }
+
+    // Configure port direction (0 = output, 1 = input)
+    void configure_port(uint8_t port, uint8_t direction) {
+        uint8_t config_reg = (port == 0) ? CONFIG_PORT0 : CONFIG_PORT1;
+        write_register(config_reg, direction);
+    }
+
+    // Write entire state to output
+    void write_output(bitset state) {
+        write_register(OUTPUT_PORT0, state.to_ulong() & 0xFF);
+        write_register(OUTPUT_PORT1, (state.to_ulong() >> 8) & 0xFF);
+    }
+
+    // Read input port
+    uint8_t read_input(uint8_t port) {
+        uint8_t input_reg = (port == 0) ? INPUT_PORT0 : INPUT_PORT1;
+        return read_register(input_reg);
+    }
+
+  private:
+    void write_register(uint8_t reg, uint8_t value) {
+        uint8_t buffer[2] = {reg, value};
+        if (write(i2c_fd, buffer, 2) != 2) {
+            throw std::runtime_error("Failed to write to I2C register");
+        }
+    }
+
+    uint8_t read_register(uint8_t reg) {
+        uint8_t value;
+        if (write(i2c_fd, &reg, 1) != 1) {
+            throw std::runtime_error("Failed to select I2C register");
+        }
+        if (read(i2c_fd, &value, 1) != 1) {
+            throw std::runtime_error("Failed to read from I2C register");
+        }
+        return value;
+    }
+};
+
 std::vector<int> initialize_daqs() {
     std::vector<int> connected_daqs;
     int count = hat_list(HAT_ID_ANY, NULL);
+
+    if (count < 0) {
+        std::cerr << "Error listing DAQ hats" << std::endl;
+        return connected_daqs;
+    }
 
     if (count > 0) {
         struct HatInfo* list =
@@ -60,22 +136,6 @@ std::vector<int> initialize_daqs() {
 
     return connected_daqs;
 }
-
-bool pcf8575_write(int fd, bitset<16> bits) {
-    uint8_t buf[2];
-    uint16_t value = bits.to_ulong();
-
-    buf[0] = value & 0xFF;        // Low byte
-    buf[1] = (value >> 8) & 0xFF; // High byte
-
-    if (write(fd, buf, 2) != 2) {
-        // i2c transaction failed
-        cout << "error writing to pcf8575\n";
-        return false;
-    }
-    return true;
-}
-
 // int close_daqs(std::vector<int> list_of_daqs) {
 //     // NOTE: THIS IS HARDCODED FOR MCC128s, AND WILL NOT, IN THE CURRENT
 //     // CONFIGURATION, WORK OTHERWISE. Currently doesn't seem to work.
@@ -102,13 +162,21 @@ double get_daq_value(int address, int channel) {
 }
 
 // recv
-void consumer_func(mqtt::async_client_ptr cli, int fd) {
+void consumer_func(mqtt::async_client_ptr cli) {
+    // open I2C
+    TCA9535 io_expander("/dev/i2c-1", I2C_ADDR);
+
+    // configure ports as output
+    io_expander.configure_port(0, 0x00);
+    io_expander.configure_port(1, 0x00);
+
     while (true) {
         auto msg = cli->consume_message();
-
         if (!msg) {
+            this_thread::sleep_for(milliseconds(1)); // prevent tight looping
             continue;
         }
+
         string m_str = msg->to_string();
         cout << msg->get_topic() << ": " << m_str << endl;
 
@@ -118,13 +186,19 @@ void consumer_func(mqtt::async_client_ptr cli, int fd) {
             std::cout << "Parsing failed: " << ec.message() << "\n";
             continue;
         }
-        int index = parsed.at("id").as_int64();
-        bool state = parsed.at("is_low").as_bool();
+        int pin = parsed.at("id").as_int64();
+        bool state = parsed.at("state").as_bool();
+
+        if (pin < 0 || pin >= 16) {
+            std::cerr << "Invalid pin number: " << pin << std::endl;
+            continue;
+        }
+
         {
             boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
 
-            relay_state.set(index, state);
-            pcf8575_write(fd, relay_state);
+            relay_state.set(pin, state);
+            io_expander.write_output(relay_state);
         }
     }
 }
@@ -181,7 +255,8 @@ void sample_func(vector<int> daq_chan) {
         }
         {
             boost::unique_lock<boost::shared_mutex> lock(_data_access);
-            sensor_data = std::move(new_data); // replace with new data atomically
+            sensor_data =
+                std::move(new_data); // replace with new data atomically
         }
         // sampling frequency
         this_thread::sleep_for(milliseconds(10));
@@ -192,22 +267,6 @@ int main(int argc, char* argv[]) {
     // open DAQ
     vector<int> daq_chan = {0, 1, 2, 3, 4, 5, 6, 7};
     mcc128_open(0);
-
-    // open I2C
-    int fd;
-    char filename[20];
-
-    snprintf(filename, 19, "/dev/i2c-1");
-    fd = open(filename, O_RDWR);
-    if (fd < 0) {
-        cout << "failed to open i2c\n";
-        exit(1);
-    }
-
-    if (ioctl(fd, I2C_SLAVE, I2C_ADDR) < 0) {
-        cout << "failed to find i2c addr\n";
-        exit(1);
-    }
 
     // mqtt
     string address = "mqtt://localhost:1883";
@@ -235,7 +294,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::thread sample(sample_func, daq_chan);
-    std::thread consumer(consumer_func, cli, fd);
+    std::thread consumer(consumer_func, cli);
     std::thread publisher(publisher_func, cli);
 
     sample.join();

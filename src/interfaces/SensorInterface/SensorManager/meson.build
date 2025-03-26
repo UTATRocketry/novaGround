@@ -1,1 +1,0 @@
-src += files('SensorManager.h', 'DummySensorManager.h')

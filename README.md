@@ -30,6 +30,7 @@ Note that boost libraries will also need to be installed.
 ```
 
 Install the daqhats library
+Install WiringPI for the servo drivers
 
 [documentation](https://mccdaq.github.io/daqhats/install.html#installation)
 
