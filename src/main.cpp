@@ -114,7 +114,7 @@ std::vector<int> initialize_daqs() {
     int count = hat_list(HAT_ID_ANY, NULL);
 
     if (count < 0) {
-        std::cerr << "Error listing DAQ hats" << std::endl;
+        throw std::runtime_error("Error listing DAQ hats");
         return connected_daqs;
     }
 
@@ -264,43 +264,57 @@ void sample_func(vector<int> daq_chan) {
 }
 
 int main(int argc, char* argv[]) {
-    // open DAQ
-    vector<int> daq_chan = {0, 1, 2, 3, 4, 5, 6, 7};
-    mcc128_open(0);
+    try {
+        // open DAQ
+        vector<int> daq_chan = {0, 1, 2, 3, 4, 5, 6, 7};
+        mcc128_open(0);
 
-    // mqtt
-    string address = "mqtt://localhost:1883";
+        // mqtt
+        string address = "mqtt://localhost:1883";
 
-    // Create an MQTT client using a smart pointer to be shared among threads.
-    auto cli = std::make_shared<mqtt::async_client>(address, CLIENT_ID);
+        // Create an MQTT client using a smart pointer to be shared among
+        // threads.
+        auto cli = std::make_shared<mqtt::async_client>(address, CLIENT_ID);
 
-    // Connect options for a persistent session and automatic reconnects.
-    auto connOpts = mqtt::connect_options_builder()
-                        .clean_session(false)
-                        .automatic_reconnect(seconds(2), seconds(30))
-                        .finalize();
+        // Connect options for a persistent session and automatic reconnects.
+        auto connOpts = mqtt::connect_options_builder()
+                            .clean_session(false)
+                            .automatic_reconnect(seconds(1), seconds(10))
+                            .finalize();
 
-    auto TOPICS = mqtt::string_collection::create({"novaground/command"});
-    const vector<int> QOS{1};
+        auto TOPICS = mqtt::string_collection::create({"novaground/command"});
+        const vector<int> QOS{1};
 
-    cli->start_consuming();
+        cli->start_consuming();
 
-    auto rsp = cli->connect(connOpts)->get_connect_response();
-    cout << "connected to mqtt broker\n" << endl;
+        auto rsp = cli->connect(connOpts);
+        if (!rsp) {
+            std::cerr << "Failed to connect to MQTT broker" << std::endl;
+            return -1;
+        }
 
-    // Subscribe if this is a new session with the server
-    if (!rsp.is_session_present()) {
-        cli->subscribe(TOPICS, QOS);
+        auto connResponse = rsp->get_connect_response();
+        cout << "Connected to MQTT broker" << endl;
+
+        if (!connResponse.is_session_present()) {
+            cli->subscribe(TOPICS, QOS);
+        }
+
+        std::thread sample(sample_func, daq_chan);
+        std::thread consumer(consumer_func, cli);
+        std::thread publisher(publisher_func, cli);
+
+        sample.detach();
+        consumer.detach();
+        publisher.detach();
+
+        // keep main thread running
+        while (true) {
+            this_thread::sleep_for(seconds(1));
+        }
+
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return -1;
     }
-
-    std::thread sample(sample_func, daq_chan);
-    std::thread consumer(consumer_func, cli);
-    std::thread publisher(publisher_func, cli);
-
-    sample.join();
-    publisher.join();
-    consumer.join();
-
-    cli->disconnect();
-    return 0;
 }
