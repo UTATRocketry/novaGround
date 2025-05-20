@@ -10,6 +10,9 @@ boost_dep = dependency('boost', modules : ['thread','json'])
     pahomqttc_lib2 = cpp.find_library('paho-mqtt3as', required: true)
     libpaho = declare_dependency(dependencies: [pahomqttc_lib1, pahomqttc_lib2])
 
+# WiringPi library
+wiringpi_dep = cpp.find_library('wiringPi', required: true)
+
 #### Grab source files
 src = []
 
@@ -56,7 +59,7 @@ else
 endif
 
 
-deps = [boost_dep,libpaho]
+deps = [boost_dep,libpaho, wiringpi_dep]
 
 #### Check for library import success
 if daqlib.found()

@@ -19,15 +19,20 @@
 #include <sys/ioctl.h>
 #include <thread>
 #include <unistd.h>
+#include "interfaces/servo.hpp"
 
 using namespace std;
 using namespace std::chrono;
+namespace json = boost::json;
+
 
 const std::string CLIENT_ID("novaground");
 const int I2C_ADDR = 0x20;
 
+// ———————— sensor storage —————————
 struct sensor_datapoint {
-    int id;
+    int hat_id;
+    int channel_id;
     double value;
     double time;
 };
@@ -35,8 +40,25 @@ struct sensor_datapoint {
 vector<sensor_datapoint> sensor_data;
 boost::shared_mutex _data_access;
 
+// ———————— relay storage ——————————
 bitset<16> relay_state;
 boost::shared_mutex _relay_state_access;
+
+// ———————— servo storage & driver ——————————
+struct servo_state {
+    int id;
+    uint16_t angle;
+};
+vector<servo_state> servo_data;
+boost::shared_mutex _servo_data_access;
+
+Adafruit_PWMServoDriver servoDriver;
+
+
+void beginServoDriver() {
+    servoDriver.begin(); // I2C address and frequency
+    servoDriver.setPWMFreq(50); // Set frequency to 50 Hz
+}
 
 class TCA9535 {
   private:
@@ -78,7 +100,7 @@ class TCA9535 {
     }
 
     // Write entire state to output
-    void write_output(bitset state) {
+    void write_output(std::bitset<16> state) {
         write_register(OUTPUT_PORT0, state.to_ulong() & 0xFF);
         write_register(OUTPUT_PORT1, (state.to_ulong() >> 8) & 0xFF);
     }
@@ -125,6 +147,7 @@ std::vector<int> initialize_daqs() {
 
         for (int i = 0; i < count; i++) {
             connected_daqs.push_back(+list[i].address);
+            std::cout << "Detected DAQ Hat at address: " << list[i].address << std::endl;
             // std::cout<< "Address " << +list[i].address <<std::endl;
             // std::cout<< "Version" << list[i].version<<std::endl;
             // std::cout<< "Product Name" << list[i].product_name<<std::endl;
@@ -162,14 +185,7 @@ double get_daq_value(int address, int channel) {
 }
 
 // recv
-void consumer_func(mqtt::async_client_ptr cli) {
-    // open I2C
-    TCA9535 io_expander("/dev/i2c-1", I2C_ADDR);
-
-    // configure ports as output
-    io_expander.configure_port(0, 0x00);
-    io_expander.configure_port(1, 0x00);
-
+void consumer_func(mqtt::async_client_ptr cli, TCA9535 io_expander) {
     while (true) {
         auto msg = cli->consume_message();
         if (!msg) {
@@ -177,6 +193,10 @@ void consumer_func(mqtt::async_client_ptr cli) {
             continue;
         }
 
+        // configure ports as output
+        io_expander.configure_port(0, 0x00);
+        io_expander.configure_port(1, 0x00);
+        
         string m_str = msg->to_string();
         cout << msg->get_topic() << ": " << m_str << endl;
 
@@ -186,40 +206,59 @@ void consumer_func(mqtt::async_client_ptr cli) {
             std::cout << "Parsing failed: " << ec.message() << "\n";
             continue;
         }
-        int pin = parsed.at("id").as_int64();
-        bool state = parsed.at("state").as_bool();
-
-        if (pin < 0 || pin >= 16) {
-            std::cerr << "Invalid pin number: " << pin << std::endl;
-            continue;
+        
+        string type  = parsed.as_object().at("type").as_string().c_str();
+        if (type == "servo" && parsed.as_object().contains("angle")) {
+            int id = parsed.as_object().at("id").as_int64();
+            uint16_t angle = static_cast<uint16_t>(parsed.as_object().at("angle").as_int64());
+            servoDriver.writeMicroseconds(static_cast<uint8_t>(id), angle);
+            /*
+            boost::unique_lock<boost::shared_mutex> lock{_servo_data_access};
+            for (auto& s : servo_data) {
+                if (s.id == id) {
+                    s.angle = angle;
+                    return;
+                }
+            }
+            servo_data.push_back({id, angle});
+            */
         }
+        if (type == "relay") {
+            int pin = parsed.at("id").as_int64();
+            bool state = parsed.at("state").is_int64() ? (parsed.at("state").as_int64() != 0) : parsed.at("state").as_bool();
 
-        {
-            boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
+            if (pin < 0 || pin >= 16) {
+                std::cerr << "Invalid pin number: " << pin << std::endl;
+                continue;
+            }
 
-            relay_state.set(pin, state);
-            io_expander.write_output(relay_state);
+            {
+                boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
+
+                relay_state.set(pin, state);
+                io_expander.write_output(relay_state);
+            }
         }
     }
 }
 
-// send
+// ———————— MQTT publisher ——————————
 void publisher_func(mqtt::async_client_ptr cli) {
     while (true) {
-        boost::json::array json_sensor_data;
-        boost::json::array json_relay_data;
+        boost::json::array json_sensor_data, json_relay_data, json_servo_data;
 
         {
             boost::shared_lock<boost::shared_mutex> lock{_data_access};
             for (const auto& sd : sensor_data) {
                 boost::json::object se;
-                se["id"] = sd.id;
+                se["hat_id"]   = sd.hat_id;
+                se["channel_id"] = sd.channel_id;
                 se["value"] = sd.value;
                 se["timestamp"] = sd.time;
                 json_sensor_data.push_back(se);
             }
         }
-
+        /*
         {
             boost::shared_lock<boost::shared_mutex> lock{_relay_state_access};
             for (size_t i = 0; i < relay_state.size(); ++i) {
@@ -230,8 +269,17 @@ void publisher_func(mqtt::async_client_ptr cli) {
             }
         }
 
-        boost::json::value payload = {{"sensors", json_sensor_data},
-                                      {"actuators", json_relay_data}};
+        {
+            boost::shared_lock<boost::shared_mutex> lock{_servo_data_access};
+            for (const auto& s : servo_data) {
+                boost::json::object se;
+                se["id"] = s.id;
+                se["angle"] = s.angle;
+                json_servo_data.push_back(se);
+            }
+        }
+        */
+        boost::json::value payload = {{"sensors", json_sensor_data}};
         string s_payload = boost::json::serialize(payload);
         cli->publish("novaground/telemetry", s_payload)->wait();
 
@@ -239,25 +287,30 @@ void publisher_func(mqtt::async_client_ptr cli) {
     }
 }
 
-// data sampling thread (only samples on address 0 so far)
-void sample_func(vector<int> daq_chan) {
+// ———————— DAQ sampling ——————————
+// data sampling thread
+void sample_func(const std::vector<int>& daq_hats, const std::vector<int>& daq_channels) {
     while (true) {
-        vector<sensor_datapoint> new_data;
-        for (auto c : daq_chan) {
-            sensor_datapoint sd;
-            sd.id = c;
-            const auto p1 = std::chrono::system_clock::now();
-            sd.value = get_daq_value(0, c);
-            sd.time = std::chrono::duration_cast<std::chrono::seconds>(
-                          p1.time_since_epoch())
-                          .count();
-            new_data.push_back(sd);
+        std::vector<sensor_datapoint> new_data;
+        for (int hat_id : daq_hats) { // Iterate over all DAQ hats
+            for (int channel : daq_channels) { // Iterate over all channels for each DAQ hat
+                sensor_datapoint sd;
+                sd.hat_id = hat_id;
+                sd.channel_id = channel;
+
+                const auto now = std::chrono::system_clock::now();
+                sd.value = get_daq_value(hat_id, channel); // Read value from the DAQ hat
+                sd.time = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+                new_data.push_back(sd);
+            }
         }
         {
             boost::unique_lock<boost::shared_mutex> lock(_data_access);
             sensor_data =
                 std::move(new_data); // replace with new data atomically
         }
+
         // sampling frequency
         this_thread::sleep_for(milliseconds(10));
     }
@@ -266,8 +319,21 @@ void sample_func(vector<int> daq_chan) {
 int main(int argc, char* argv[]) {
     try {
         // open DAQ
-        vector<int> daq_chan = {0, 1, 2, 3, 4, 5, 6, 7};
-        mcc128_open(0);
+        // Detect and initialize DAQ hats
+        std::vector<int> daq_hats = initialize_daqs();
+        std::vector<int> daq_channels = {0, 1, 2, 3, 4, 5, 6, 7}; // Channels to sample
+
+        for (int hat_id : daq_hats) {
+            mcc128_open(hat_id); // Open each DAQ hat
+        }
+        
+        beginServoDriver();
+        // open I2C
+        TCA9535 io_expander("/dev/i2c-1", I2C_ADDR);
+
+        // configure ports as output
+        io_expander.configure_port(0, 0x00);
+        io_expander.configure_port(1, 0x00);
 
         // mqtt
         string address = "mqtt://localhost:1883";
@@ -300,8 +366,8 @@ int main(int argc, char* argv[]) {
             cli->subscribe(TOPICS, QOS);
         }
 
-        std::thread sample(sample_func, daq_chan);
-        std::thread consumer(consumer_func, cli);
+        std::thread sample(sample_func, daq_hats, daq_channels);
+        std::thread consumer(consumer_func, cli, io_expander);
         std::thread publisher(publisher_func, cli);
 
         sample.detach();

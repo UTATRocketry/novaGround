@@ -1,4 +1,3 @@
-#ifdef WIRINGPI_AVAILABLE
 /*!
  *  @file Adafruit_PWMServoDriver.h
  *
@@ -316,5 +315,3 @@ void Adafruit_PWMServoDriver::write8(uint8_t addr, uint8_t d) {
  *  @param ms Number of milliseconds to sleep
  */
 void Adafruit_PWMServoDriver::delay(int ms) { usleep(ms * MILLI_TO_MICRO); }
-
-#endif

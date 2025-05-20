@@ -1,6 +1,3 @@
-#pragma once
-
-#ifdef WIRINGPI_AVAILABLE
 /*!
  *  @file Adafruit_PWMServoDriver.h
  *
@@ -10,6 +7,7 @@
  *  Designed specifically to work with the Adafruit 16-channel PWM & Servo
  * driver.
  */
+#pragma once
 
 #include <cstdint>
 #include <iostream>
@@ -93,5 +91,3 @@ class Adafruit_PWMServoDriver {
     void write8(uint8_t addr, uint8_t d);
     void delay(int ms);
 };
-
-#endif
