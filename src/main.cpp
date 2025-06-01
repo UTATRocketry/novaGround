@@ -43,6 +43,7 @@ boost::shared_mutex _data_access;
 // ———————— relay storage ——————————
 bitset<16> relay_state;
 boost::shared_mutex _relay_state_access;
+bool write_failed;
 
 // ———————— servo storage & driver ——————————
 struct servo_state {
@@ -101,8 +102,20 @@ class TCA9535 {
 
     // Write entire state to output
     void write_output(std::bitset<16> state) {
-        write_register(OUTPUT_PORT0, state.to_ulong() & 0xFF);
-        write_register(OUTPUT_PORT1, (state.to_ulong() >> 8) & 0xFF);
+        bool success = false;
+		for (int retries = 0; retries < 10; retries++) {
+            write_register(OUTPUT_PORT0, state.to_ulong() & 0xFF);
+            write_register(OUTPUT_PORT1, (state.to_ulong() >> 8) & 0xFF);
+            std::cout << "Writing Relay States" << std::endl;
+            if (write_failed) {
+                std::cerr << "Issue with writing relay state. Retrying..." << std::endl;
+                usleep(50000);
+                continue;
+		    }
+            success = true;
+            break;
+        }
+        if (!success) throw std::runtime_error("Failed to write relay state after 10 tries. Aborting program...");
     }
 
     // Read input port
@@ -113,9 +126,10 @@ class TCA9535 {
 
   private:
     void write_register(uint8_t reg, uint8_t value) {
+        write_failed = false;
         uint8_t buffer[2] = {reg, value};
         if (write(i2c_fd, buffer, 2) != 2) {
-            throw std::runtime_error("Failed to write to I2C register");
+            write_failed = true;
         }
     }
 
@@ -230,12 +244,11 @@ void consumer_func(mqtt::async_client_ptr cli, TCA9535 io_expander) {
             if (pin < 0 || pin >= 16) {
                 std::cerr << "Invalid pin number: " << pin << std::endl;
                 continue;
-            }
-
-            {
+            } else {
                 boost::unique_lock<boost::shared_mutex> lock{_relay_state_access};
 
                 relay_state.set(pin, state);
+
                 io_expander.write_output(relay_state);
             }
         }
@@ -283,7 +296,7 @@ void publisher_func(mqtt::async_client_ptr cli) {
         string s_payload = boost::json::serialize(payload);
         cli->publish("novaground/telemetry", s_payload)->wait();
 
-        this_thread::sleep_for(milliseconds(100));
+        this_thread::sleep_for(milliseconds(5));
     }
 }
 
@@ -312,7 +325,7 @@ void sample_func(const std::vector<int>& daq_hats, const std::vector<int>& daq_c
         }
 
         // sampling frequency
-        this_thread::sleep_for(milliseconds(10));
+        this_thread::sleep_for(milliseconds(1));
     }
 }
 
@@ -334,6 +347,14 @@ int main(int argc, char* argv[]) {
         // configure ports as output
         io_expander.configure_port(0, 0x00);
         io_expander.configure_port(1, 0x00);
+
+        // Set all ports to default states
+
+        for (int i = 0; i < 16; i++) {
+            relay_state.set(i, true);
+        }
+        
+	    io_expander.write_output(relay_state);
 
         // mqtt
         string address = "mqtt://localhost:1883";
