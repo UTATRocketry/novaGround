@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <iostream>
 #include <unistd.h>
 #include <wiringPiI2C.h>

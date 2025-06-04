@@ -13,6 +13,9 @@ boost_dep = dependency('boost', modules : ['thread','json'])
 # WiringPi library
 wiringpi_dep = cpp.find_library('wiringPi', required: true)
 
+# libgpiod library
+gpiod_dep = dependency('libgpiod', version: '>=1.6', required: true)
+
 #### Grab source files
 src = []
 
@@ -59,7 +62,7 @@ else
 endif
 
 
-deps = [boost_dep,libpaho, wiringpi_dep]
+deps = [boost_dep,libpaho, wiringpi_dep, gpiod_dep]
 
 #### Check for library import success
 if daqlib.found()

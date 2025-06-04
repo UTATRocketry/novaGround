@@ -1,1 +1,1 @@
-src += files('servo.cpp')
+src += files('servo.cpp','io_expander.cpp', 'gpio_manager.cpp')

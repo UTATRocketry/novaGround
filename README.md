@@ -27,6 +27,7 @@ Note that boost libraries will also need to be installed.
 
 ```
     sudo apt-get install libboost-all-dev libpaho-mqttpp-dev
+    sudo apt install libgpiod-dev
 ```
 
 Install the daqhats library
@@ -55,4 +56,10 @@ Then you can set up an alias in `~/.zshrc` or `~/.bashrc` depending on what shel
 In order to run the program, a mqtt broker must be set up and running on port `1883`. Execute
 ```
     ./build/novaGround
+```
+
+## Hardware Setup
+If you change the board stackup and have more than one HAT board attached you must update the saved EEPROM images for the library to have the correct board information. You can use the DAQ HAT Manager or the command:
+```
+    sudo daqhats_read_eeproms
 ```
