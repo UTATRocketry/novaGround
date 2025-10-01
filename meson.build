@@ -5,6 +5,16 @@ add_global_arguments(language: 'cpp')
 cpp = meson.get_compiler('cpp')
 # clang = cpp.find_clang()
 daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
+boost_dep = dependency('boost', modules : ['thread','json'])
+    pahomqttc_lib1 = cpp.find_library('paho-mqttpp3', required: true)
+    pahomqttc_lib2 = cpp.find_library('paho-mqtt3as', required: true)
+    libpaho = declare_dependency(dependencies: [pahomqttc_lib1, pahomqttc_lib2])
+
+# WiringPi library
+wiringpi_dep = cpp.find_library('wiringPi', required: true)
+
+# libgpiod library
+gpiod_dep = dependency('libgpiod', version: '>=1.6', required: true)
 
 #### Grab source files
 src = []
@@ -52,11 +62,11 @@ else
 endif
 
 
-deps = []
+deps = [boost_dep,libpaho, wiringpi_dep, gpiod_dep]
 
 #### Check for library import success
 if daqlib.found()
-    dependencies += daqlib
+    deps += daqlib
 endif
 
 executable('novaGround', sources : src, dependencies: deps, include_directories: include)

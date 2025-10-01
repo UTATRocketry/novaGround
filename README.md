@@ -2,6 +2,11 @@
 
 ## Build and Formatting tools
 ### Installing and using meson
+
+```
+    sudo apt-install build-essential clang
+```
+
 We use meson as our build tool in this project. It can be installed with pip:
 ```
     pip3 install --user meson
@@ -17,7 +22,20 @@ This will set up the build directory `build`. To compile, run the following:
 ```
 The `-C` flag specifies which build directory to use.
 
-### Using clang-tidy (note still trying to make this work)
+## Dependencies
+Note that boost libraries will also need to be installed.
+
+```
+    sudo apt-get install libboost-all-dev libpaho-mqttpp-dev
+    sudo apt install libgpiod-dev
+```
+
+Install the daqhats library
+Install WiringPI for the servo drivers
+
+[documentation](https://mccdaq.github.io/daqhats/install.html#installation)
+
+<!-- ### Using clang-tidy (note still trying to make this work)
 There is a `.clang_tidy` file in the directory that will perform linting on our code. Meson will automatically run this if you have `clang-tidy` available on your system. On mac this can be done by first making sure `llvm` is installed:
 ```
     brew install llvm
@@ -33,4 +51,15 @@ Then you can set up an alias in `~/.zshrc` or `~/.bashrc` depending on what shel
 
     # For bash
     echo "alias clang-tidy=\"/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy\"" >> ~/.bashrc
+``` -->
+## Testing
+In order to run the program, a mqtt broker must be set up and running on port `1883`. Execute
+```
+    ./build/novaGround
+```
+
+## Hardware Setup
+If you change the board stackup and have more than one HAT board attached you must update the saved EEPROM images for the library to have the correct board information. You can use the DAQ HAT Manager or the command:
+```
+    sudo daqhats_read_eeproms
 ```
