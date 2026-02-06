@@ -59,7 +59,9 @@ In order to run the program, a mqtt broker must be set up and running on port `1
 ```
 
 ## Hardware Setup
-If you change the board stackup and have more than one HAT board attached you must update the saved EEPROM images for the library to have the correct board information. You can use the DAQ HAT Manager or the command:
+When installing multiple hats, you must install the appropriate address jumpers onto address header locations A0-A2 of the new HAT board. The recommended addressing method is to have the addresses increment from 0 as the boards are installed, i.e. 0, 1, 2, and so forth. **There must always be a board at address 0.**
+
+If you change the board stackup and have more than one HAT board attached, you must update the saved EEPROM images for the library to have the correct board information. You can use the DAQ HAT Manager or the command:
 ```
     sudo daqhats_read_eeproms
 ```
