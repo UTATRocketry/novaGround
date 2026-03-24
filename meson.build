@@ -20,6 +20,7 @@ gpiod_dep = dependency('libgpiod', version: '>=1.6', required: true)
 src = []
 
 include = []
+include += include_directories('src')
 
 subdir('src')
 

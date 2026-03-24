@@ -1,4 +1,4 @@
-/*!
+﻿/*!
  *  @file Adafruit_PWMServoDriver.h
  *
  *  This is a library for our Adafruit 16-channel PWM & Servo driver.
@@ -10,8 +10,8 @@
 #pragma once
 
 #include <cstdint>
-#include <stdexcept>
 #include <iostream>
+#include <stdexcept>
 #include <unistd.h>
 #include <wiringPiI2C.h>
 
@@ -66,29 +66,33 @@
 class Adafruit_PWMServoDriver {
   public:
     explicit Adafruit_PWMServoDriver(uint8_t addr = PCA9685_I2C_ADDRESS);
-    void begin(uint8_t prescale = 0);
+    bool begin(uint8_t prescale = 0);
+    bool is_ready() const;
+
     void reset();
     void sleep();
     void wakeup();
     void setExtClk(uint8_t prescale);
     void setPWMFreq(float freq);
     void setOutputMode(bool totempole);
-    uint16_t
-    getPWM(uint8_t num); // functionality corrected from library
-                         // not a big deal since this isn't used anywhere
+    uint16_t getPWM(uint8_t num);
     void setPWM(uint8_t num, uint16_t on, uint16_t off);
     void setPin(uint8_t num, uint16_t val, bool invert = false);
     uint8_t readPrescale();
     void writeMicroseconds(uint8_t num, uint16_t Microseconds);
+    bool disablePWM(uint8_t num);
 
     void setOscillatorFrequency(uint32_t freq);
     uint32_t getOscillatorFrequency();
 
   private:
-    int fd; // file descriptor for wiringpi i2c library: -1 if error
-    uint8_t _i2caddr;
-    uint32_t _oscillator_freq;
+    int fd = -1;
+    uint8_t _i2caddr = 0;
+    uint32_t _oscillator_freq = FREQUENCY_OSCILLATOR;
+    bool warned_not_ready_ = false;
+
     uint8_t read8(uint8_t addr);
     void write8(uint8_t addr, uint8_t d);
     void delay(int ms);
+    bool ensure_ready(const char* action);
 };
