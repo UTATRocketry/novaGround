@@ -8,8 +8,8 @@ namespace {
 const int kServoDefaultMicros = 1500;
 }
 
-ServoController::ServoController(Adafruit_PWMServoDriver* driver, TelemetryStore* telemetry)
-    : driver_(driver), telemetry_(telemetry) {}
+ServoController::ServoController(Adafruit_PWMServoDriver* driver, TelemetryStore* telemetry, DataLogger* logger)
+    : driver_(driver), telemetry_(telemetry), logger_(logger) {}
 
 bool ServoController::available() const {
     return driver_ && driver_->is_ready();
@@ -50,6 +50,10 @@ void ServoController::handle_command(const boost::json::object& cmd) {
             if (telemetry_) {
                 telemetry_->upsert_servo_state(id, state.last_angle, false);
             }
+            if (logger_) {
+                logger_->update_servo(id, state.last_angle, false);
+                logger_->log_actuator_snapshot("servo");
+            }
             return;
         }
         if (action == "on") {
@@ -61,6 +65,10 @@ void ServoController::handle_command(const boost::json::object& cmd) {
             driver_->writeMicroseconds(static_cast<uint8_t>(id), state.last_angle);
             if (telemetry_) {
                 telemetry_->upsert_servo_state(id, state.last_angle, true);
+            }
+            if (logger_) {
+                logger_->update_servo(id, state.last_angle, true);
+                logger_->log_actuator_snapshot("servo");
             }
             return;
         }
@@ -82,4 +90,9 @@ void ServoController::handle_command(const boost::json::object& cmd) {
     if (telemetry_) {
         telemetry_->upsert_servo_state(id, angle, true);
     }
+    if (logger_) {
+        logger_->update_servo(id, angle, true);
+        logger_->log_actuator_snapshot("servo");
+    }
 }
+

@@ -4,12 +4,13 @@
 #include <boost/json.hpp>
 #include <mutex>
 
+#include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
 #include "interfaces/io_expander.hpp"
 
 class RelayController {
 public:
-    RelayController(TCA9535* expander, TelemetryStore* telemetry);
+    RelayController(TCA9535* expander, TelemetryStore* telemetry, DataLogger* logger);
 
     void handle_command(const boost::json::object& cmd);
     void set_initial_state(const std::bitset<16>& state);
@@ -19,6 +20,7 @@ private:
 
     TCA9535* expander_ = nullptr;
     TelemetryStore* telemetry_ = nullptr;
+    DataLogger* logger_ = nullptr;
     std::bitset<16> relay_state_;
     std::mutex mutex_;
 };

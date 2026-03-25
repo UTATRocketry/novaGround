@@ -5,12 +5,13 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
 #include "interfaces/servo.hpp"
 
 class ServoController {
 public:
-    ServoController(Adafruit_PWMServoDriver* driver, TelemetryStore* telemetry);
+    ServoController(Adafruit_PWMServoDriver* driver, TelemetryStore* telemetry, DataLogger* logger);
 
     void handle_command(const boost::json::object& cmd);
 
@@ -25,6 +26,7 @@ private:
 
     Adafruit_PWMServoDriver* driver_ = nullptr;
     TelemetryStore* telemetry_ = nullptr;
+    DataLogger* logger_ = nullptr;
     std::unordered_map<int, ServoState> states_;
     std::mutex mutex_;
 };

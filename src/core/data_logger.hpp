@@ -1,0 +1,50 @@
+﻿#pragma once
+
+#include <bitset>
+#include <fstream>
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "core/telemetry.hpp"
+
+class DataLogger {
+public:
+    DataLogger(std::string data_dir,
+               std::vector<std::string> sensor_headers,
+               std::vector<std::string> actuator_headers,
+               std::vector<int> gpio_pins);
+
+    bool start(const std::string& base_filename);
+    void stop();
+    bool is_active() const;
+
+    void log_sensor_row(double timestamp_ms, const std::vector<double>& values);
+
+    void update_gpio(int pin, int state);
+    void update_relay_state(const std::bitset<16>& state);
+    void update_servo(int id, uint16_t angle, bool enabled);
+    void log_actuator_snapshot(const std::string& type_id);
+
+private:
+    std::string data_dir_;
+    std::vector<std::string> sensor_headers_;
+    std::vector<std::string> actuator_headers_;
+    std::vector<int> gpio_pins_;
+
+    mutable std::mutex mutex_;
+    std::ofstream sensor_file_;
+    std::ofstream actuator_file_;
+    bool active_ = false;
+
+    std::map<int, int> gpio_states_;
+    std::bitset<16> relay_state_;
+    std::map<int, ServoTelemetry> servo_states_;
+
+    std::string sanitize_filename(const std::string& name) const;
+    bool open_files(const std::string& base_filename);
+    void close_files();
+
+    std::string join_headers(const std::vector<std::string>& headers) const;
+};

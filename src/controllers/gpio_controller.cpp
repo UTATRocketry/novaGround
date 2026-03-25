@@ -4,8 +4,8 @@
 
 #include "utils/json_utils.hpp"
 
-GpioController::GpioController(GPIO_Manager* manager, TelemetryStore* telemetry)
-    : manager_(manager), telemetry_(telemetry) {}
+GpioController::GpioController(GPIO_Manager* manager, DataLogger* logger)
+    : manager_(manager), logger_(logger) {}
 
 bool GpioController::available() const {
     return manager_ != nullptr;
@@ -37,5 +37,12 @@ void GpioController::handle_command(const boost::json::object& cmd) {
 
     if (auto state_opt = get_bool(cmd, "state")) {
         manager_->write(pin, *state_opt ? 1 : 0);
+        if (logger_) {
+            logger_->update_gpio(pin, *state_opt ? 1 : 0);
+        }
+    }
+
+    if (logger_) {
+        logger_->log_actuator_snapshot("gpio");
     }
 }

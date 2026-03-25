@@ -7,7 +7,7 @@
 #include <vector>
 
 struct SensorSample {
-    int hat_id = 0;
+    int hat_id = 0; // technically this is the hat address
     int channel_id = 0;
     double value = 0.0;
     double timestamp_ms = 0.0;

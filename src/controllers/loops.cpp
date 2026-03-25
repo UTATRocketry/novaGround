@@ -13,9 +13,7 @@ const std::string kTelemetryTopic = "nova/telemetry";
 const std::string kSourceId = "novaGround";
 }
 
-void publisher_loop(mqtt::async_client_ptr cli,
-                    TelemetryStore& telemetry,
-                    DataFileWriter* file_writer) {
+void publisher_loop(mqtt::async_client_ptr cli, TelemetryStore& telemetry) {
     while (true) {
         try {
             json::array json_sensor_data;
@@ -43,10 +41,6 @@ void publisher_loop(mqtt::async_client_ptr cli,
             payload["gpios"] = json_gpio_data;
 
             std::string s_payload = json::serialize(payload);
-
-            if (file_writer) {
-                file_writer->write_line(s_payload);
-            }
 
             if (cli && cli->is_connected()) {
                 try {

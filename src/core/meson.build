@@ -1,1 +1,1 @@
-src += files('telemetry.cpp', 'command_router.cpp', 'data_file.cpp')
+src += files('telemetry.cpp', 'command_router.cpp', 'data_file.cpp', 'data_logger.cpp')

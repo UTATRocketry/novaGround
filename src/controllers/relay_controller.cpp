@@ -4,8 +4,8 @@
 
 #include "utils/json_utils.hpp"
 
-RelayController::RelayController(TCA9535* expander, TelemetryStore* telemetry)
-    : expander_(expander), telemetry_(telemetry) {}
+RelayController::RelayController(TCA9535* expander, TelemetryStore* telemetry, DataLogger* logger)
+    : expander_(expander), telemetry_(telemetry), logger_(logger) {}
 
 bool RelayController::available() const {
     return expander_ && expander_->is_ready();
@@ -43,6 +43,10 @@ void RelayController::handle_command(const boost::json::object& cmd) {
     if (telemetry_) {
         telemetry_->set_relay_state(relay_state_);
     }
+    if (logger_) {
+        logger_->update_relay_state(relay_state_);
+        logger_->log_actuator_snapshot("relay");
+    }
 }
 
 void RelayController::set_initial_state(const std::bitset<16>& state) {
@@ -50,4 +54,8 @@ void RelayController::set_initial_state(const std::bitset<16>& state) {
     if (telemetry_) {
         telemetry_->set_relay_state(relay_state_);
     }
+    if (logger_) {
+        logger_->update_relay_state(relay_state_);
+    }
 }
+

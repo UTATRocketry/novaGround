@@ -9,16 +9,18 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
-#include <daqhats/mcc128.h>
 #include <daqhats/daqhats.h>
+#include <daqhats/mcc128.h>
 
+#include "controllers/data_file_controller.hpp"
 #include "controllers/gpio_controller.hpp"
 #include "controllers/loops.hpp"
 #include "controllers/relay_controller.hpp"
 #include "controllers/servo_controller.hpp"
 #include "core/command_router.hpp"
-#include "core/data_file.hpp"
+#include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
 #include "interfaces/gpio_manager.hpp"
 #include "interfaces/io_expander.hpp"
@@ -39,6 +41,9 @@ int main(int argc, char* argv[]) {
     (void)argv;
 
     TelemetryStore telemetry;
+
+    std::vector<unsigned int> output_pins = {17, 27, 22};
+    std::vector<unsigned int> input_pins = {5, 6};
 
     std::vector<int> daq_hats;
     std::vector<int> daq_channels = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -61,6 +66,36 @@ int main(int argc, char* argv[]) {
     } catch (const std::exception& e) {
         std::cerr << "DAQ initialization failed: " << e.what() << std::endl;
     }
+
+    std::vector<std::string> sensor_headers;
+    sensor_headers.push_back("timestamp");
+    for (int hat_id : daq_hats) {
+        for (int channel : daq_channels) {
+            sensor_headers.push_back("hat" + std::to_string(hat_id) + "_ch" +
+                                     std::to_string(channel));
+        }
+    }
+
+    std::vector<std::string> actuator_headers;
+    actuator_headers.push_back("timestamp");
+    for (unsigned int pin : output_pins) {
+        actuator_headers.push_back("gpio_" + std::to_string(pin));
+    }
+    for (int i = 0; i < 16; ++i) {
+        actuator_headers.push_back("relay_" + std::to_string(i));
+    }
+    for (int i = 0; i < 16; ++i) {
+        actuator_headers.push_back("servo_" + std::to_string(i));
+    }
+    actuator_headers.push_back("type_id");
+
+    std::vector<int> gpio_pins_for_logging;
+    gpio_pins_for_logging.reserve(output_pins.size());
+    for (unsigned int pin : output_pins) {
+        gpio_pins_for_logging.push_back(static_cast<int>(pin));
+    }
+
+    DataLogger data_logger("data", sensor_headers, actuator_headers, gpio_pins_for_logging);
 
     Adafruit_PWMServoDriver servo_driver;
     bool has_servo = servo_driver.begin();
@@ -87,18 +122,18 @@ int main(int argc, char* argv[]) {
         std::cerr << "IO expander not available." << std::endl;
     }
 
+    data_logger.update_relay_state(relay_state);
+
     std::unique_ptr<GPIO_Manager> gpio_manager;
     bool has_gpio_manager = false;
     try {
         gpio_manager = std::make_unique<GPIO_Manager>("/dev/gpiochip0");
         has_gpio_manager = true;
 
-        std::vector<unsigned int> output_pins = {17, 27, 22};
-        std::vector<unsigned int> input_pins = {5, 6};
-
         for (auto pin : output_pins) {
             gpio_manager->set_direction(pin, "out");
             gpio_manager->write(pin, 0);
+            data_logger.update_gpio(static_cast<int>(pin), 0);
         }
 
         for (auto pin : input_pins) {
@@ -109,12 +144,18 @@ int main(int argc, char* argv[]) {
         has_gpio_manager = false;
     }
 
-    ServoController servo_controller(has_servo ? &servo_driver : nullptr, &telemetry);
-    RelayController relay_controller(has_io_expander ? io_expander.get() : nullptr, &telemetry);
+    ServoController servo_controller(has_servo ? &servo_driver : nullptr,
+                                     &telemetry,
+                                     &data_logger);
+    RelayController relay_controller(has_io_expander ? io_expander.get() : nullptr,
+                                     &telemetry,
+                                     &data_logger);
     if (has_io_expander) {
         relay_controller.set_initial_state(relay_state);
     }
-    GpioController gpio_controller(has_gpio_manager ? gpio_manager.get() : nullptr, &telemetry);
+    GpioController gpio_controller(has_gpio_manager ? gpio_manager.get() : nullptr,
+                                   &data_logger);
+    DataFileController data_file_controller(&data_logger);
 
     CommandRouter router(kCommandSourceId);
     router.register_handler("servo", [&servo_controller](const boost::json::object& cmd) {
@@ -125,6 +166,9 @@ int main(int argc, char* argv[]) {
     });
     router.register_handler("gpio", [&gpio_controller](const boost::json::object& cmd) {
         gpio_controller.handle_command(cmd);
+    });
+    router.register_handler("data_file", [&data_file_controller](const boost::json::object& cmd) {
+        data_file_controller.handle_command(cmd);
     });
 
     std::string address = "mqtt://localhost:1883";
@@ -165,13 +209,11 @@ int main(int argc, char* argv[]) {
         std::cerr << "MQTT connection unavailable; continuing without broker." << std::endl;
     }
 
-    auto file_writer = DataFileWriter::from_env("NOVA_DATA_FILE");
-
-    std::thread publisher(publisher_loop, cli, std::ref(telemetry), file_writer.get());
+    std::thread publisher(publisher_loop, cli, std::ref(telemetry));
     publisher.detach();
 
     if (has_daq) {
-        std::thread sampler(sample_func, daq_hats, daq_channels, std::ref(telemetry));
+        std::thread sampler(sample_func, daq_hats, daq_channels, std::ref(telemetry), &data_logger);
         sampler.detach();
     }
 

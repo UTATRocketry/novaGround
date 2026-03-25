@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "core/telemetry.hpp"
+#include "core/data_logger.hpp"
 
 std::vector<int> initialize_daqs();
 bool get_daq_value(int address, int channel, double& value);
@@ -10,4 +11,5 @@ bool get_daq_value(int address, int channel, double& value);
 // Data sampling loop
 void sample_func(const std::vector<int>& daq_hats,
                  const std::vector<int>& daq_channels,
-                 TelemetryStore& store);
+                 TelemetryStore& store,
+                 DataLogger* logger);
