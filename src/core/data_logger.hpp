@@ -19,6 +19,8 @@ public:
     bool start(const std::string& base_filename);
     void stop();
     bool is_active() const;
+    std::string last_sensor_path() const;
+    std::string last_actuator_path() const;
 
     void log_sensor_row(double timestamp_ms, const std::vector<double>& values);
 
@@ -37,6 +39,8 @@ private:
     std::ofstream sensor_file_;
     std::ofstream actuator_file_;
     bool active_ = false;
+    std::string last_sensor_path_;
+    std::string last_actuator_path_;
 
     std::map<int, int> gpio_states_;
     std::bitset<16> relay_state_;
@@ -48,3 +52,4 @@ private:
 
     std::string join_headers(const std::vector<std::string>& headers) const;
 };
+

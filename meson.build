@@ -16,6 +16,9 @@ wiringpi_dep = cpp.find_library('wiringPi', required: true)
 # libgpiod library
 gpiod_dep = dependency('libgpiod', version: '>=1.6', required: true)
 
+# libcurl library (optional)
+curl_dep = dependency('libcurl', required: false)
+
 #### Grab source files
 src = []
 
@@ -64,6 +67,11 @@ endif
 
 
 deps = [boost_dep,libpaho, wiringpi_dep, gpiod_dep]
+
+if curl_dep.found()
+    deps += curl_dep
+    add_project_arguments('-DHAVE_LIBCURL', language: 'cpp')
+endif
 
 #### Check for library import success
 if daqlib.found()

@@ -38,6 +38,16 @@ bool DataLogger::is_active() const {
     return active_;
 }
 
+std::string DataLogger::last_sensor_path() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_sensor_path_;
+}
+
+std::string DataLogger::last_actuator_path() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_actuator_path_;
+}
+
 void DataLogger::log_sensor_row(double timestamp_ms, const std::vector<double>& values) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!active_ || !sensor_file_.is_open()) {
@@ -149,6 +159,9 @@ bool DataLogger::open_files(const std::string& base_filename) {
 
     sensor_file_ << join_headers(sensor_headers_) << "\n";
     actuator_file_ << join_headers(actuator_headers_) << "\n";
+
+    last_sensor_path_ = sensor_path;
+    last_actuator_path_ = actuator_path;
 
     return true;
 }
