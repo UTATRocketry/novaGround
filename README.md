@@ -1,15 +1,17 @@
 # Nova Ground
 
 ## Build and Formatting tools
+Note: novaGround must be installed and run on a raspberry pi 4 running the Raspberry Pi OS (Legacy, 64-bit) as the MCC DAQHat library does not work with Debian Trixie
+
 ### Installing and using meson
 
 ```
-    sudo apt-install build-essential clang
+    sudo apt install build-essential clang
 ```
 
 We use meson as our build tool in this project. It can be installed with pip:
 ```
-    pip3 install --user meson
+    sudo apt install meson
 ```
 Meson does out of src builds therefore we will use `novaGround/build` directory as standard. I think we will likely add more build directories in the future for testing and release builds. But for development use `build`. To set up the build directory and use clang for compilation, run the following:
 ```
@@ -24,17 +26,49 @@ The `-C` flag specifies which build directory to use.
 
 ## Dependencies
 Note that boost libraries will also need to be installed.
+```
+wget https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.bz2
+tar xf boost_1_81_0.tar.bz2
+cd boost_1_81_0
+./bootstrap.sh --prefix=/usr/local
+./b2
+sudo ./b2 install
+
+echo 'export BOOST_ROOT=/usr/local' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+echo 'export CPLUS_INCLUDE_PATH=/usr/local/include:$CPLUS_INCLUDE_PATH' >> ~/.bashrc
 
 ```
-    sudo apt-get install libboost-all-dev libpaho-mqttpp-dev
-    sudo apt install libgpiod-dev
+
+also:
 ```
+    sudo apt-get install libpaho-mqtt-dev
+    sudo apt install libgpiod-dev
+    sudo apt-get install libcurl4-openssl-dev
+```
+
 
 Install the daqhats library
-Install WiringPI for the servo drivers
-
+```
+    git clone https://github.com/mccdaq/daqhats.git
+    cd /daqhats
+    sudo ./install.sh
+```
 [documentation](https://mccdaq.github.io/daqhats/install.html#installation)
 
+Install WiringPI for the servo drivers
+```
+# fetch the source
+git clone https://github.com/WiringPi/WiringPi.git
+cd WiringPi
+
+# build the package
+./build debian
+mv debian-template/wiringpi_3.18_arm64.deb .
+
+# install it
+sudo apt install ./wiringpi-3.x.deb
+```
 <!-- ### Using clang-tidy (note still trying to make this work)
 There is a `.clang_tidy` file in the directory that will perform linting on our code. Meson will automatically run this if you have `clang-tidy` available on your system. On mac this can be done by first making sure `llvm` is installed:
 ```
@@ -65,3 +99,4 @@ If you change the board stackup and have more than one HAT board attached, you m
 ```
     sudo daqhats_read_eeproms
 ```
+

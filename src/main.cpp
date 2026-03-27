@@ -11,9 +11,6 @@
 #include <thread>
 #include <vector>
 
-#include <daqhats/daqhats.h>
-#include <daqhats/mcc128.h>
-
 #include "controllers/data_file_controller.hpp"
 #include "controllers/gpio_controller.hpp"
 #include "controllers/loops.hpp"
@@ -24,7 +21,7 @@
 #include "core/telemetry.hpp"
 #include "interfaces/gpio_manager.hpp"
 #include "interfaces/io_expander.hpp"
-#include "interfaces/mcc128_daq.hpp"
+#include "interfaces/mcc_daqhats.hpp"
 #include "interfaces/servo.hpp"
 
 using namespace std::chrono;
@@ -45,20 +42,15 @@ int main(int argc, char* argv[]) {
     std::vector<unsigned int> output_pins = {17, 27, 22};
     std::vector<unsigned int> input_pins = {5, 6};
 
-    std::vector<int> daq_hats;
-    std::vector<int> daq_channels = {0, 1, 2, 3, 4, 5, 6, 7};
+    std::vector<DaqHatDevice> daq_hats;
     bool has_daq = false;
 
     try {
         daq_hats = initialize_daqs();
-        std::vector<int> opened_hats;
-        for (int hat_id : daq_hats) {
-            int result = mcc128_open(hat_id);
-            if (result == RESULT_SUCCESS) {
-                opened_hats.push_back(hat_id);
-            } else {
-                std::cerr << "Failed to open DAQ hat " << hat_id
-                          << ": code " << result << std::endl;
+        std::vector<DaqHatDevice> opened_hats;
+        for (const auto& hat : daq_hats) {
+            if (open_daq_hat(hat)) {
+                opened_hats.push_back(hat);
             }
         }
         daq_hats = std::move(opened_hats);
@@ -67,14 +59,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "DAQ initialization failed: " << e.what() << std::endl;
     }
 
-    std::vector<std::string> sensor_headers;
-    sensor_headers.push_back("timestamp");
-    for (int hat_id : daq_hats) {
-        for (int channel : daq_channels) {
-            sensor_headers.push_back("hat" + std::to_string(hat_id) + "_ch" +
-                                     std::to_string(channel));
-        }
-    }
+    std::vector<std::string> sensor_headers = build_sensor_headers(daq_hats);
 
     std::vector<std::string> actuator_headers;
     actuator_headers.push_back("timestamp");
@@ -213,7 +198,7 @@ int main(int argc, char* argv[]) {
     publisher.detach();
 
     if (has_daq) {
-        std::thread sampler(sample_func, daq_hats, daq_channels, std::ref(telemetry), &data_logger);
+        std::thread sampler(sample_func, daq_hats, std::ref(telemetry), &data_logger);
         sampler.detach();
     }
 
@@ -229,4 +214,3 @@ int main(int argc, char* argv[]) {
         std::this_thread::sleep_for(seconds(1));
     }
 }
-

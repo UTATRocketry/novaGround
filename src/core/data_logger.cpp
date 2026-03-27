@@ -145,8 +145,8 @@ bool DataLogger::open_files(const std::string& base_filename) {
     }
 
     std::string safe_name = sanitize_filename(base_filename);
-    std::string sensor_path = data_dir_ + "/" + safe_name + "_sensors.csv";
-    std::string actuator_path = data_dir_ + "/" + safe_name + "_actuators.csv";
+    std::string sensor_path = data_dir_ + "/" + "novaGround_" + safe_name + "_sensors.csv";
+    std::string actuator_path = data_dir_ + "/" + "novaGround_" + safe_name + "_actuators.csv";
 
     sensor_file_.open(sensor_path, std::ios::out | std::ios::trunc);
     actuator_file_.open(actuator_path, std::ios::out | std::ios::trunc);
