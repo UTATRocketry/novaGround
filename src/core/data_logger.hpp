@@ -14,7 +14,8 @@ public:
     DataLogger(std::string data_dir,
                std::vector<std::string> sensor_headers,
                std::vector<std::string> actuator_headers,
-               std::vector<int> gpio_pins);
+               std::vector<int> gpio_pins,
+               std::string file_prefix);
 
     bool start(const std::string& base_filename);
     void stop();
@@ -31,6 +32,7 @@ public:
 
 private:
     std::string data_dir_;
+    std::string file_prefix_;
     std::vector<std::string> sensor_headers_;
     std::vector<std::string> actuator_headers_;
     std::vector<int> gpio_pins_;

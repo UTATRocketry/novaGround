@@ -10,10 +10,9 @@
 #include "utils/json_utils.hpp"
 
 namespace {
-const char* kUploadUrl = "http://localhost:8000/api/data-files/upload";
 
 #ifdef HAVE_LIBCURL
-bool upload_file(const std::string& path) {
+bool upload_file(const std::string& path, const std::string& upload_url) {
     if (path.empty()) {
         std::cerr << "Upload skipped: empty path." << std::endl;
         return false;
@@ -34,7 +33,7 @@ bool upload_file(const std::string& path) {
     curl_mime_name(part, "file");
     curl_mime_filedata(part, path.c_str());
 
-    curl_easy_setopt(curl, CURLOPT_URL, kUploadUrl);
+    curl_easy_setopt(curl, CURLOPT_URL, upload_url.c_str());
     curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
 
@@ -49,15 +48,17 @@ bool upload_file(const std::string& path) {
     return res == CURLE_OK;
 }
 #else
-bool upload_file(const std::string& path) {
+bool upload_file(const std::string& path, const std::string& upload_url) {
+    (void)upload_url;
     std::cerr << "Upload skipped (libcurl not available): " << path << std::endl;
     return false;
 }
 #endif
 }
 
-DataFileController::DataFileController(DataLogger* logger)
-    : logger_(logger) {}
+DataFileController::DataFileController(DataLogger* logger, std::string upload_url)
+    : logger_(logger),
+      upload_url_(std::move(upload_url)) {}
 
 void DataFileController::handle_command(const boost::json::object& cmd) {
     if (!logger_) {
@@ -90,8 +91,8 @@ void DataFileController::handle_command(const boost::json::object& cmd) {
         logger_->stop();
         const std::string sensor_path = logger_->last_sensor_path();
         const std::string actuator_path = logger_->last_actuator_path();
-        upload_file(sensor_path);
-        upload_file(actuator_path);
+        upload_file(sensor_path, upload_url_);
+        upload_file(actuator_path, upload_url_);
         return;
     }
 

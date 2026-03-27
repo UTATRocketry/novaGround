@@ -14,11 +14,13 @@ using namespace std::chrono;
 DataLogger::DataLogger(std::string data_dir,
                        std::vector<std::string> sensor_headers,
                        std::vector<std::string> actuator_headers,
-                       std::vector<int> gpio_pins)
+                       std::vector<int> gpio_pins,
+                       std::string file_prefix)
     : data_dir_(std::move(data_dir)),
       sensor_headers_(std::move(sensor_headers)),
       actuator_headers_(std::move(actuator_headers)),
-      gpio_pins_(std::move(gpio_pins)) {}
+      gpio_pins_(std::move(gpio_pins)),
+      file_prefix_(std::move(file_prefix)) {}
 
 bool DataLogger::start(const std::string& base_filename) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -145,8 +147,12 @@ bool DataLogger::open_files(const std::string& base_filename) {
     }
 
     std::string safe_name = sanitize_filename(base_filename);
-    std::string sensor_path = data_dir_ + "/" + "novaGround_" + safe_name + "_sensors.csv";
-    std::string actuator_path = data_dir_ + "/" + "novaGround_" + safe_name + "_actuators.csv";
+    std::string safe_prefix = sanitize_filename(file_prefix_);
+    if (!safe_prefix.empty()) {
+        safe_name = safe_prefix + "_" + safe_name;
+    }
+    std::string sensor_path = data_dir_ + "/" + safe_name + "_sensors.csv";
+    std::string actuator_path = data_dir_ + "/" + safe_name + "_actuators.csv";
 
     sensor_file_.open(sensor_path, std::ios::out | std::ios::trunc);
     actuator_file_.open(actuator_path, std::ios::out | std::ios::trunc);

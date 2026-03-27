@@ -86,11 +86,46 @@ Then you can set up an alias in `~/.zshrc` or `~/.bashrc` depending on what shel
     # For bash
     echo "alias clang-tidy=\"/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy\"" >> ~/.bashrc
 ``` -->
-## Testing
-In order to run the program, a mqtt broker must be set up and running on port `1883`. Execute
+## Build Targets
+This repository builds three executables, each with its own build ID and default sampling/publish rates:
+
+1. `novaGround` (build ID `novaGround`, sample `1ms`, publish `50ms`)
+2. `novaThermo` (build ID `novaThermo`, sample `100ms`, publish `250ms`)
+3. `novaMock` (build ID `novaMock`, sample `100ms`, publish `250ms`, hardware init disabled)
+
+All targets are built by running:
+```
+    meson compile -C build
+```
+
+## Running
+In order to run the program, an MQTT broker should be available (defaults to `localhost:1883`).
+
+Examples:
 ```
     ./build/novaGround
+    ./build/novaThermo
+    ./build/novaMock
 ```
+
+## Runtime Options
+You can override broker/backend endpoints and sampling/publish rates at runtime:
+
+```
+    ./build/novaGround --publish-ms 250 --verbosity 1
+    ./build/novaThermo --sample-ms 250 --broker 192.168.0.1 --backend 192.168.0.1:8000
+```
+
+Options:
+1. `--broker <host[:port]|mqtt://...>`: MQTT broker address (default `localhost:1883`)
+2. `--backend <host[:port]|http://...>`: Backend base URL for data-file uploads (default `http://localhost:8000`)
+3. `--verbosity <0|1|2>`: 0=quiet, 1=info, 2=debug
+4. `--sample-ms <ms>`: DAQ sampling interval
+5. `--publish-ms <ms>`: Telemetry publish interval
+
+## Data Logging
+Data files are automatically prefixed with the build ID. Example:
+`novaGround_someName_sensors.csv` and `novaGround_someName_actuators.csv`.
 
 ## Hardware Setup
 When installing multiple hats, you must install the appropriate address jumpers onto address header locations A0-A2 of the new HAT board. The recommended addressing method is to have the addresses increment from 0 as the boards are installed, i.e. 0, 1, 2, and so forth. **There must always be a board at address 0.**

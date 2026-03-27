@@ -20,4 +20,5 @@ std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& h
 // Data sampling loop
 void sample_func(const std::vector<DaqHatDevice>& daq_hats,
                  TelemetryStore& store,
-                 DataLogger* logger);
+                 DataLogger* logger,
+                 int sample_interval_ms);

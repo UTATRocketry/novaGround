@@ -3,6 +3,7 @@
 #include <boost/json.hpp>
 #include <chrono>
 #include <iostream>
+#include <string>
 #include <thread>
 
 namespace json = boost::json;
@@ -10,10 +11,13 @@ using namespace std::chrono;
 
 namespace {
 const std::string kTelemetryTopic = "nova/telemetry";
-const std::string kSourceId = "novaGround";
 }
 
-void publisher_loop(mqtt::async_client_ptr cli, TelemetryStore& telemetry) {
+void publisher_loop(mqtt::async_client_ptr cli,
+                    TelemetryStore& telemetry,
+                    std::string source_id,
+                    int publish_interval_ms) {
+    int interval_ms = publish_interval_ms > 0 ? publish_interval_ms : 1;
     while (true) {
         try {
             json::array json_sensor_data;
@@ -36,7 +40,7 @@ void publisher_loop(mqtt::async_client_ptr cli, TelemetryStore& telemetry) {
             }
 
             json::object payload;
-            payload["source"] = kSourceId;
+            payload["source"] = source_id;
             payload["sensors"] = json_sensor_data;
             payload["gpios"] = json_gpio_data;
 
@@ -55,7 +59,7 @@ void publisher_loop(mqtt::async_client_ptr cli, TelemetryStore& telemetry) {
             std::cerr << "Publisher error: unknown exception" << std::endl;
         }
 
-        std::this_thread::sleep_for(milliseconds(50));
+        std::this_thread::sleep_for(milliseconds(interval_ms));
     }
 }
 

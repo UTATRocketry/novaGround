@@ -78,4 +78,45 @@ if daqlib.found()
     deps += daqlib
 endif
 
-executable('novaGround', sources : src, dependencies: deps, include_directories: include)
+common_cpp_args = [
+    '-DNOVA_DEFAULT_BROKER="localhost:1883"',
+    '-DNOVA_DEFAULT_BACKEND="http://localhost:8000"',
+    '-DNOVA_DEFAULT_VERBOSITY=1',
+]
+
+executable(
+    'novaGround',
+    sources: src,
+    dependencies: deps,
+    include_directories: include,
+    cpp_args: common_cpp_args + [
+        '-DNOVA_BUILD_ID="novaGround"',
+        '-DNOVA_DEFAULT_SAMPLE_MS=1',
+        '-DNOVA_DEFAULT_PUBLISH_MS=50',
+    ],
+)
+
+executable(
+    'novaThermo',
+    sources: src,
+    dependencies: deps,
+    include_directories: include,
+    cpp_args: common_cpp_args + [
+        '-DNOVA_BUILD_ID="novaThermo"',
+        '-DNOVA_DEFAULT_SAMPLE_MS=100',
+        '-DNOVA_DEFAULT_PUBLISH_MS=250',
+    ],
+)
+
+executable(
+    'novaMock',
+    sources: src,
+    dependencies: deps,
+    include_directories: include,
+    cpp_args: common_cpp_args + [
+        '-DNOVA_BUILD_ID="novaMock"',
+        '-DNOVA_DEFAULT_SAMPLE_MS=100',
+        '-DNOVA_DEFAULT_PUBLISH_MS=250',
+        '-DNOVA_MOCK_MODE=1',
+    ],
+)

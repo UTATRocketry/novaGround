@@ -149,7 +149,9 @@ std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& h
 
 void sample_func(const std::vector<DaqHatDevice>& daq_hats,
                  TelemetryStore& store,
-                 DataLogger* logger) {
+                 DataLogger* logger,
+                 int sample_interval_ms) {
+    int interval_ms = sample_interval_ms > 0 ? sample_interval_ms : 1;
     while (true) {
         std::vector<SensorSample> new_data;
         std::vector<double> values;
@@ -186,6 +188,6 @@ void sample_func(const std::vector<DaqHatDevice>& daq_hats,
             logger->log_sensor_row(timestamp_ms, values);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
     }
 }
