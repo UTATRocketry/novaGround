@@ -1,15 +1,19 @@
 #include "mcc_daqhats.hpp"
 
 #include <chrono>
+#include <cstdlib>
+#ifdef HAVE_DAQHATS
 #include <daqhats/daqhats.h>
 #include <daqhats/mcc128.h>
 #include <daqhats/mcc134.h>
+#endif
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <thread>
 
 namespace {
+#ifdef HAVE_DAQHATS
 std::vector<int> channels_for_hat(int hat_id) {
     switch (hat_id) {
         case HAT_ID_MCC_128:
@@ -31,10 +35,15 @@ const char* hat_type_label(int hat_id) {
             return "unknown";
     }
 }
+#endif
 } // namespace
 
 std::vector<DaqHatDevice> initialize_daqs() {
     std::vector<DaqHatDevice> connected_daqs;
+#ifndef HAVE_DAQHATS
+    std::cout << "MCC DAQHats library not available; skipping DAQ discovery." << std::endl;
+    return connected_daqs;
+#else
     int count = hat_list(HAT_ID_ANY, NULL);
 
     if (count < 0) {
@@ -69,9 +78,15 @@ std::vector<DaqHatDevice> initialize_daqs() {
     }
 
     return connected_daqs;
+#endif
 }
 
 bool open_daq_hat(const DaqHatDevice& hat) {
+#ifndef HAVE_DAQHATS
+    (void)hat;
+    std::cerr << "MCC DAQHats library not available; cannot open DAQ hat." << std::endl;
+    return false;
+#else
     int result = RESULT_SUCCESS;
     switch (hat.hat_id) {
         case HAT_ID_MCC_128:
@@ -104,9 +119,16 @@ bool open_daq_hat(const DaqHatDevice& hat) {
                       << hat.hat_id << "); skipping open." << std::endl;
             return false;
     }
+#endif
 }
 
 bool get_daq_value(const DaqHatDevice& hat, int channel, double& value) {
+#ifndef HAVE_DAQHATS
+    (void)hat;
+    (void)channel;
+    value = std::numeric_limits<double>::quiet_NaN();
+    return false;
+#else
     int result = RESULT_SUCCESS;
     switch (hat.hat_id) {
         case HAT_ID_MCC_128: {
@@ -130,6 +152,7 @@ bool get_daq_value(const DaqHatDevice& hat, int channel, double& value) {
         return false;
     }
     return true;
+#endif
 }
 
 std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& hats) {

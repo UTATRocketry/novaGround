@@ -15,6 +15,9 @@ wiringpi_dep = cpp.find_library('wiringPi', required: true)
 
 # libgpiod library
 gpiod_dep = dependency('libgpiod', version: '>=1.6', required: true)
+if gpiod_dep.version().version_compare('>=2.0')
+    add_project_arguments('-DNOVA_LIBGPIOD_V2', language: 'cpp')
+endif
 
 # libcurl library (optional)
 curl_dep = dependency('libcurl', required: false)
@@ -76,6 +79,7 @@ endif
 #### Check for library import success
 if daqlib.found()
     deps += daqlib
+    add_project_arguments('-DHAVE_DAQHATS', language: 'cpp')
 endif
 
 common_cpp_args = [

@@ -24,7 +24,12 @@ public:
 
 private:
     struct PinInfo {
+#ifdef NOVA_LIBGPIOD_V2
+        struct gpiod_line_request* request = nullptr;
+        unsigned int offset = 0;
+#else
         gpiod_line* line = nullptr;
+#endif
         std::string direction;
     };
 

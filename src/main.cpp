@@ -16,6 +16,7 @@
 #include "controllers/loops.hpp"
 #include "controllers/relay_controller.hpp"
 #include "controllers/servo_controller.hpp"
+#include "controllers/uart_controller.hpp"
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
@@ -23,6 +24,7 @@
 #include "interfaces/io_expander.hpp"
 #include "interfaces/mcc_daqhats.hpp"
 #include "interfaces/servo.hpp"
+#include "interfaces/uart_link.hpp"
 
 using namespace std::chrono;
 
@@ -57,6 +59,9 @@ struct RuntimeConfig {
     int verbosity = NOVA_DEFAULT_VERBOSITY;
     int sample_interval_ms = NOVA_DEFAULT_SAMPLE_MS;
     int publish_interval_ms = NOVA_DEFAULT_PUBLISH_MS;
+    bool enable_uart = true;
+    std::string uart_device = "/dev/serial0";
+    int uart_baud = 115200;
 };
 
 bool parse_int(const std::string& text, int& value) {
@@ -111,6 +116,9 @@ void print_usage(const char* exe_name) {
               << "  --verbosity <0|1|2>                 0=quiet,1=info,2=debug\n"
               << "  --sample-ms <ms>                    DAQ sampling interval\n"
               << "  --publish-ms <ms>                   Telemetry publish interval\n"
+              << "  --uart-device <path>                UART device path (default /dev/serial0)\n"
+              << "  --uart-baud <baud>                  UART baud rate (default 115200)\n"
+              << "  --no-uart                           Disable STM32 UART link\n"
               << "  --help                              Show this message\n";
 }
 }
@@ -158,6 +166,23 @@ int main(int argc, char* argv[]) {
             config.publish_interval_ms = value;
             continue;
         }
+        if (arg == "--uart-device" && i + 1 < argc) {
+            config.uart_device = argv[++i];
+            continue;
+        }
+        if (arg == "--uart-baud" && i + 1 < argc) {
+            int value = 0;
+            if (!parse_int(argv[++i], value)) {
+                std::cerr << "Invalid UART baud value.\n";
+                return 1;
+            }
+            config.uart_baud = value;
+            continue;
+        }
+        if (arg == "--no-uart") {
+            config.enable_uart = false;
+            continue;
+        }
         std::cerr << "Unknown option: " << arg << "\n";
         print_usage(argv[0]);
         return 1;
@@ -178,6 +203,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Upload URL: " << upload_url << std::endl;
         std::cout << "Sample interval (ms): " << config.sample_interval_ms << std::endl;
         std::cout << "Publish interval (ms): " << config.publish_interval_ms << std::endl;
+        std::cout << "UART: " << (config.enable_uart ? "enabled" : "disabled")
+                  << " device=" << config.uart_device
+                  << " baud=" << config.uart_baud << std::endl;
     }
 
     TelemetryStore telemetry;
@@ -238,6 +266,8 @@ int main(int argc, char* argv[]) {
     std::bitset<16> relay_state;
     std::unique_ptr<GPIO_Manager> gpio_manager;
     bool has_gpio_manager = false;
+    std::unique_ptr<UartLink> uart_link;
+    bool has_uart = false;
 
 #ifndef NOVA_MOCK_MODE
     has_servo = servo_driver.begin();
@@ -281,8 +311,17 @@ int main(int argc, char* argv[]) {
         std::cerr << "GPIO Manager initialization failed: " << e.what() << std::endl;
         has_gpio_manager = false;
     }
+
+    if (config.enable_uart) {
+        uart_link = std::make_unique<UartLink>(config.uart_device, config.uart_baud);
+        has_uart = uart_link->open();
+        if (!has_uart) {
+            std::cerr << "UART link unavailable; continuing without STM32 UART." << std::endl;
+            uart_link.reset();
+        }
+    }
 #else
-    std::cout << "Mock mode enabled: skipping GPIO/relay/servo initialization." << std::endl;
+    std::cout << "Mock mode enabled: skipping GPIO/relay/servo/UART initialization." << std::endl;
 #endif
 
     ServoController servo_controller(has_servo ? &servo_driver : nullptr,
@@ -297,6 +336,7 @@ int main(int argc, char* argv[]) {
     GpioController gpio_controller(has_gpio_manager ? gpio_manager.get() : nullptr,
                                    &data_logger);
     DataFileController data_file_controller(&data_logger, upload_url);
+    UartController uart_controller(has_uart ? uart_link.get() : nullptr);
 
     CommandRouter router(kCommandSourceId);
     router.register_handler("servo", [&servo_controller](const boost::json::object& cmd) {
@@ -310,6 +350,9 @@ int main(int argc, char* argv[]) {
     });
     router.register_handler("data_file", [&data_file_controller](const boost::json::object& cmd) {
         data_file_controller.handle_command(cmd);
+    });
+    router.register_handler("uart", [&uart_controller](const boost::json::object& cmd) {
+        uart_controller.handle_command(cmd);
     });
 
     auto cli = std::make_shared<mqtt::async_client>(broker_address, node_id);
@@ -368,6 +411,11 @@ int main(int argc, char* argv[]) {
     if (has_gpio_manager) {
         std::thread gpio_sampler(gpio_sampler_loop, std::ref(*gpio_manager), std::ref(telemetry));
         gpio_sampler.detach();
+    }
+
+    if (has_uart) {
+        std::thread uart_rx(uart_rx_loop, std::ref(*uart_link), cli, node_id);
+        uart_rx.detach();
     }
 
     std::thread consumer(consumer_loop, cli, std::ref(router));
