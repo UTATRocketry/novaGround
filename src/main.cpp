@@ -62,6 +62,9 @@ struct RuntimeConfig {
     bool enable_uart = true;
     std::string uart_device = "/dev/serial0";
     int uart_baud = 115200;
+    bool enable_servo = true;
+    bool enable_relay = true;
+    bool enable_gpio = true;
 };
 
 bool parse_int(const std::string& text, int& value) {
@@ -119,6 +122,9 @@ void print_usage(const char* exe_name) {
               << "  --uart-device <path>                UART device path (default /dev/serial0)\n"
               << "  --uart-baud <baud>                  UART baud rate (default 115200)\n"
               << "  --no-uart                           Disable STM32 UART link\n"
+              << "  --no-servo                          Disable servo/PCA9685 initialization\n"
+              << "  --no-relay                          Disable relay/TCA9535 initialization\n"
+              << "  --no-gpio                           Disable Raspberry Pi GPIO initialization\n"
               << "  --help                              Show this message\n";
 }
 }
@@ -183,6 +189,18 @@ int main(int argc, char* argv[]) {
             config.enable_uart = false;
             continue;
         }
+        if (arg == "--no-servo") {
+            config.enable_servo = false;
+            continue;
+        }
+        if (arg == "--no-relay") {
+            config.enable_relay = false;
+            continue;
+        }
+        if (arg == "--no-gpio") {
+            config.enable_gpio = false;
+            continue;
+        }
         std::cerr << "Unknown option: " << arg << "\n";
         print_usage(argv[0]);
         return 1;
@@ -206,6 +224,10 @@ int main(int argc, char* argv[]) {
         std::cout << "UART: " << (config.enable_uart ? "enabled" : "disabled")
                   << " device=" << config.uart_device
                   << " baud=" << config.uart_baud << std::endl;
+        std::cout << "Servo: " << (config.enable_servo ? "enabled" : "disabled")
+                  << ", Relay: " << (config.enable_relay ? "enabled" : "disabled")
+                  << ", GPIO: " << (config.enable_gpio ? "enabled" : "disabled")
+                  << std::endl;
     }
 
     TelemetryStore telemetry;
@@ -270,46 +292,61 @@ int main(int argc, char* argv[]) {
     bool has_uart = false;
 
 #ifndef NOVA_MOCK_MODE
-    has_servo = servo_driver.begin();
-    if (has_servo) {
-        servo_driver.setPWMFreq(50);
+    if (config.enable_servo) {
+        has_servo = servo_driver.begin();
+        if (has_servo) {
+            servo_driver.setPWMFreq(50);
+        }
+    } else {
+        std::cout << "Servo initialization disabled." << std::endl;
     }
 
-    io_expander = std::make_unique<TCA9535>("/dev/i2c-1", kI2CAddr);
-    has_io_expander = io_expander->is_ready();
-    if (has_io_expander) {
-        bool ok = io_expander->configure_port(0, 0x00) &&
-                  io_expander->configure_port(1, 0x00);
-        for (int i = 0; i < 16; i++) {
-            relay_state.set(i, true);
-        }
-        ok = ok && io_expander->write_output(relay_state);
-        if (!ok) {
-            std::cerr << "IO expander setup failed; disabling relay control." << std::endl;
+    if (config.enable_relay) {
+        io_expander = std::make_unique<TCA9535>("/dev/i2c-1", kI2CAddr);
+        has_io_expander = io_expander->is_ready();
+        if (has_io_expander) {
+            bool ok = io_expander->configure_port(0, 0x00) &&
+                      io_expander->configure_port(1, 0x00);
+            for (int i = 0; i < 16; i++) {
+                relay_state.set(i, true);
+            }
+            ok = ok && io_expander->write_output(relay_state);
+            if (!ok) {
+                std::cerr << "IO expander setup failed; disabling relay control." << std::endl;
+                has_io_expander = false;
+            }
+        } else {
+            std::cerr << "IO expander not available." << std::endl;
             has_io_expander = false;
         }
     } else {
-        std::cerr << "IO expander not available." << std::endl;
+        std::cout << "Relay initialization disabled." << std::endl;
     }
 
-    data_logger.update_relay_state(relay_state);
+    if (config.enable_relay) {
+        data_logger.update_relay_state(relay_state);
+    }
 
-    try {
-        gpio_manager = std::make_unique<GPIO_Manager>("/dev/gpiochip0");
-        has_gpio_manager = true;
+    if (config.enable_gpio) {
+        try {
+            gpio_manager = std::make_unique<GPIO_Manager>("/dev/gpiochip0");
+            has_gpio_manager = true;
 
-        for (auto pin : output_pins) {
-            gpio_manager->set_direction(pin, "out");
-            gpio_manager->write(pin, 0);
-            data_logger.update_gpio(static_cast<int>(pin), 0);
+            for (auto pin : output_pins) {
+                gpio_manager->set_direction(pin, "out");
+                gpio_manager->write(pin, 0);
+                data_logger.update_gpio(static_cast<int>(pin), 0);
+            }
+
+            for (auto pin : input_pins) {
+                gpio_manager->set_direction(pin, "in");
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "GPIO Manager initialization failed: " << e.what() << std::endl;
+            has_gpio_manager = false;
         }
-
-        for (auto pin : input_pins) {
-            gpio_manager->set_direction(pin, "in");
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "GPIO Manager initialization failed: " << e.what() << std::endl;
-        has_gpio_manager = false;
+    } else {
+        std::cout << "GPIO initialization disabled." << std::endl;
     }
 
     if (config.enable_uart) {
