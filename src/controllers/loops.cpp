@@ -282,7 +282,7 @@ void uart_rx_loop(UartLink& uart,
 
             if (cli && cli->is_connected()) {
                 try {
-                    cli->publish(kUartTopic, json::serialize(payload))->wait();
+                    cli->publish(kUartTopic, json::serialize(payload));
                 } catch (const std::exception& e) {
                     std::cerr << "UART publish failed: " << e.what() << std::endl;
                 }
