@@ -11,8 +11,8 @@ namespace json = boost::json;
 using namespace std::chrono;
 
 namespace {
-const std::string kTelemetryTopic = "nova/telemetry";
-const std::string kUartTopic = "nova/uart";
+const std::string kTelemetryTopic = "novaground/telemetry";
+const std::string kUartTopic = "novaground/uart";
 
 uint32_t get_u32_le(const std::array<uint8_t, kUartFrameMaxPayload>& data, size_t off) {
     return static_cast<uint32_t>(data[off]) |
@@ -112,6 +112,30 @@ json::object fmc_telem_to_json(const UartFrame& frame) {
     return obj;
 }
 
+json::object uart_ack_to_json(const UartFrame& frame) {
+    json::object obj;
+    if (frame.len == 1) {
+        obj["ack_schema"] = "status_only";
+        obj["status"] = static_cast<int>(frame.payload[0]);
+        return obj;
+    }
+
+    if (frame.len >= 9) {
+        obj["ack_schema"] = "can_bridge";
+        obj["sender"] = static_cast<int>(frame.payload[0]);
+        obj["cmd_id"] = get_u32_le(frame.payload, 1);
+        obj["opcode"] = static_cast<int>(
+            static_cast<uint16_t>(frame.payload[5]) |
+            (static_cast<uint16_t>(frame.payload[6]) << 8));
+        obj["ok"] = static_cast<bool>(frame.payload[7]);
+        obj["status"] = static_cast<int>(frame.payload[8]);
+        return obj;
+    }
+
+    obj["ack_schema"] = "unknown";
+    return obj;
+}
+
 json::object uart_frame_to_json(const UartFrame& frame) {
     json::object obj;
     obj["ver"] = static_cast<int>(frame.ver);
@@ -123,8 +147,8 @@ json::object uart_frame_to_json(const UartFrame& frame) {
     obj["src"] = static_cast<int>(frame.src);
     obj["payload"] = uart_payload_to_json(frame);
 
-    if (frame.msg == UART_MSG_ACK && frame.len >= 1) {
-        obj["status"] = static_cast<int>(frame.payload[0]);
+    if (frame.msg == UART_MSG_ACK) {
+        obj["decoded"] = uart_ack_to_json(frame);
     } else if (frame.msg == UART_MSG_ERR && frame.len >= 1) {
         obj["error"] = static_cast<int>(frame.payload[0]);
     } else if (frame.msg == UART_MSG_EVENT && frame.len >= 1) {

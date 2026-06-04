@@ -25,15 +25,16 @@ void CommandRouter::handle_message(const std::string& payload) {
     }
 
     const json::object& root = parsed.as_object();
-    auto source_it = root.if_contains("source");
-    if (!source_it || !source_it->is_string()) {
-        std::cerr << "Command missing valid source." << "\n";
-        return;
-    }
+    if (auto source_it = root.if_contains("source")) {
+        if (!source_it->is_string()) {
+            std::cerr << "Command has invalid source." << "\n";
+            return;
+        }
 
-    std::string source = source_it->as_string().c_str();
-    if (source != expected_source_) {
-        return;
+        std::string source = source_it->as_string().c_str();
+        if (source != expected_source_) {
+            return;
+        }
     }
 
     json::object cmd_obj;

@@ -48,7 +48,7 @@ using namespace std::chrono;
 #endif
 
 namespace {
-const std::string kCommandTopic = "nova/command";
+const std::string kCommandTopic = "novaground/command";
 const std::string kCommandSourceId = "novaOps";
 const int kI2CAddr = 0x20;
 
