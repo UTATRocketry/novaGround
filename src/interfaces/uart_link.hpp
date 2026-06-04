@@ -35,5 +35,7 @@ private:
     int fd_ = -1;
     UartFrameParser parser_;
     std::deque<UartFrame> pending_frames_;
-    mutable std::mutex io_mutex_;
+    mutable std::mutex state_mutex_;
+    std::mutex tx_mutex_;
+    std::mutex rx_mutex_;
 };

@@ -250,12 +250,30 @@ void gpio_sampler_loop(GPIO_Manager& manager, TelemetryStore& telemetry) {
     }
 }
 
-void uart_rx_loop(UartLink& uart, mqtt::async_client_ptr cli, std::string source_id) {
+void uart_rx_loop(UartLink& uart,
+                  mqtt::async_client_ptr cli,
+                  std::string source_id,
+                  int telem_publish_interval_ms) {
+    auto last_telem_publish = steady_clock::time_point::min();
+    int telem_interval_ms = 1000;
+    if (telem_publish_interval_ms > 0) {
+        telem_interval_ms = telem_publish_interval_ms;
+    }
+
     while (true) {
         try {
             auto frame = uart.read_frame(milliseconds(100));
             if (!frame) {
                 continue;
+            }
+
+            if (frame->msg == UART_MSG_TELEM) {
+                auto now = steady_clock::now();
+                if (last_telem_publish != steady_clock::time_point::min() &&
+                    duration_cast<milliseconds>(now - last_telem_publish).count() < telem_interval_ms) {
+                    continue;
+                }
+                last_telem_publish = now;
             }
 
             json::object payload;

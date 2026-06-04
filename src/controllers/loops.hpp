@@ -18,4 +18,7 @@ void consumer_loop(mqtt::async_client_ptr cli, CommandRouter& router);
 
 void gpio_sampler_loop(GPIO_Manager& manager, TelemetryStore& telemetry);
 
-void uart_rx_loop(UartLink& uart, mqtt::async_client_ptr cli, std::string source_id);
+void uart_rx_loop(UartLink& uart,
+                  mqtt::async_client_ptr cli,
+                  std::string source_id,
+                  int telem_publish_interval_ms);

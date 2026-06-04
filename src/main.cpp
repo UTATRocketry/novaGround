@@ -62,6 +62,7 @@ struct RuntimeConfig {
     bool enable_uart = true;
     std::string uart_device = "/dev/serial0";
     int uart_baud = 115200;
+    int uart_publish_interval_ms = 1000;
     bool enable_servo = true;
     bool enable_relay = true;
     bool enable_gpio = true;
@@ -121,6 +122,7 @@ void print_usage(const char* exe_name) {
               << "  --publish-ms <ms>                   Telemetry publish interval\n"
               << "  --uart-device <path>                UART device path (default /dev/serial0)\n"
               << "  --uart-baud <baud>                  UART baud rate (default 115200)\n"
+              << "  --uart-publish-ms <ms>              UART telemetry publish interval\n"
               << "  --no-uart                           Disable STM32 UART link\n"
               << "  --no-servo                          Disable servo/PCA9685 initialization\n"
               << "  --no-relay                          Disable relay/TCA9535 initialization\n"
@@ -185,6 +187,15 @@ int main(int argc, char* argv[]) {
             config.uart_baud = value;
             continue;
         }
+        if (arg == "--uart-publish-ms" && i + 1 < argc) {
+            int value = 0;
+            if (!parse_int(argv[++i], value)) {
+                std::cerr << "Invalid UART publish interval value.\n";
+                return 1;
+            }
+            config.uart_publish_interval_ms = value;
+            continue;
+        }
         if (arg == "--no-uart") {
             config.enable_uart = false;
             continue;
@@ -223,7 +234,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Publish interval (ms): " << config.publish_interval_ms << std::endl;
         std::cout << "UART: " << (config.enable_uart ? "enabled" : "disabled")
                   << " device=" << config.uart_device
-                  << " baud=" << config.uart_baud << std::endl;
+                  << " baud=" << config.uart_baud
+                  << " publish_ms=" << config.uart_publish_interval_ms << std::endl;
         std::cout << "Servo: " << (config.enable_servo ? "enabled" : "disabled")
                   << ", Relay: " << (config.enable_relay ? "enabled" : "disabled")
                   << ", GPIO: " << (config.enable_gpio ? "enabled" : "disabled")
@@ -449,7 +461,11 @@ int main(int argc, char* argv[]) {
     }
 
     if (has_uart) {
-        std::thread uart_rx(uart_rx_loop, std::ref(*uart_link), cli, node_id);
+        std::thread uart_rx(uart_rx_loop,
+                            std::ref(*uart_link),
+                            cli,
+                            node_id,
+                            config.uart_publish_interval_ms);
         uart_rx.detach();
     }
 

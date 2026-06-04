@@ -43,7 +43,7 @@ UartLink::~UartLink() {
 }
 
 bool UartLink::open() {
-    std::lock_guard<std::mutex> lock(io_mutex_);
+    std::lock_guard<std::mutex> lock(state_mutex_);
     if (fd_ >= 0) {
         return true;
     }
@@ -65,7 +65,7 @@ bool UartLink::open() {
 }
 
 void UartLink::close() {
-    std::lock_guard<std::mutex> lock(io_mutex_);
+    std::lock_guard<std::mutex> lock(state_mutex_);
     if (fd_ >= 0) {
         ::close(fd_);
         fd_ = -1;
@@ -73,21 +73,26 @@ void UartLink::close() {
 }
 
 bool UartLink::is_open() const {
-    std::lock_guard<std::mutex> lock(io_mutex_);
+    std::lock_guard<std::mutex> lock(state_mutex_);
     return fd_ >= 0;
 }
 
 bool UartLink::send_frame(const UartFrame& frame) {
     std::vector<uint8_t> bytes = build_uart_frame(frame);
-    std::lock_guard<std::mutex> lock(io_mutex_);
-    if (fd_ < 0) {
+    std::lock_guard<std::mutex> tx_lock(tx_mutex_);
+    int fd = -1;
+    {
+        std::lock_guard<std::mutex> state_lock(state_mutex_);
+        fd = fd_;
+    }
+    if (fd < 0) {
         std::cerr << "UART send requested while port is closed." << std::endl;
         return false;
     }
 
     size_t written = 0;
     while (written < bytes.size()) {
-        ssize_t n = ::write(fd_, bytes.data() + written, bytes.size() - written);
+        ssize_t n = ::write(fd, bytes.data() + written, bytes.size() - written);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
@@ -98,7 +103,7 @@ bool UartLink::send_frame(const UartFrame& frame) {
         written += static_cast<size_t>(n);
     }
 
-    if (::tcdrain(fd_) != 0) {
+    if (::tcdrain(fd) != 0) {
         std::cerr << "UART drain failed: " << std::strerror(errno) << std::endl;
         return false;
     }
@@ -107,19 +112,24 @@ bool UartLink::send_frame(const UartFrame& frame) {
 }
 
 std::optional<UartFrame> UartLink::read_frame(std::chrono::milliseconds timeout) {
-    std::lock_guard<std::mutex> lock(io_mutex_);
+    std::lock_guard<std::mutex> rx_lock(rx_mutex_);
     if (!pending_frames_.empty()) {
         UartFrame frame = pending_frames_.front();
         pending_frames_.pop_front();
         return frame;
     }
 
-    if (fd_ < 0) {
+    int fd = -1;
+    {
+        std::lock_guard<std::mutex> state_lock(state_mutex_);
+        fd = fd_;
+    }
+    if (fd < 0) {
         return std::nullopt;
     }
 
     pollfd pfd{};
-    pfd.fd = fd_;
+    pfd.fd = fd;
     pfd.events = POLLIN;
 
     int poll_result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
@@ -134,7 +144,7 @@ std::optional<UartFrame> UartLink::read_frame(std::chrono::milliseconds timeout)
     }
 
     std::array<uint8_t, 128> buf{};
-    ssize_t n = ::read(fd_, buf.data(), buf.size());
+    ssize_t n = ::read(fd, buf.data(), buf.size());
     if (n < 0) {
         if (errno != EINTR) {
             std::cerr << "UART read failed: " << std::strerror(errno) << std::endl;
