@@ -406,15 +406,12 @@ int main(int argc, char* argv[]) {
         try {
             auto rsp = cli->connect(connOpts);
             if (rsp) {
-                auto connResponse = rsp->get_connect_response();
                 connected = true;
                 std::cout << "Connected to MQTT broker" << std::endl;
 
-                if (!connResponse.is_session_present()) {
-                    auto topics = mqtt::string_collection::create({kCommandTopic});
-                    const std::vector<int> qos{1};
-                    cli->subscribe(topics, qos);
-                }
+                auto topics = mqtt::string_collection::create({kCommandTopic});
+                const std::vector<int> qos{1};
+                cli->subscribe(topics, qos);
             }
         } catch (const std::exception& e) {
             std::cerr << "MQTT connect failed: " << e.what() << std::endl;
