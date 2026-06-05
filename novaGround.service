@@ -1,0 +1,13 @@
+[Unit]
+Description= novaGround Service
+After=network.target
+
+[Service]
+ExecStart=./Desktop/novaGround/run.sh
+WorkingDirectory=/home/pi
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
