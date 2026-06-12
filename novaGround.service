@@ -3,11 +3,13 @@ Description= novaGround Service
 After=network.target
 
 [Service]
-ExecStart=./Desktop/novaGround/run.sh
-WorkingDirectory=/home/pi
+ExecStart=/home/pi/Desktop/novaGround/run.sh
+WorkingDirectory=/home/pi/Desktop/novaGround
 StandardOutput=inherit
 StandardError=inherit
 Restart=always
+# Set FAS_PORT to enable the direct RS-422 link, e.g.:
+# Environment="FAS_PORT=/dev/ttyUSB0"
 
 [Install]
 WantedBy=multi-user.target

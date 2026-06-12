@@ -1,17 +1,21 @@
 ﻿#include "mqtt/async_client.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "controllers/data_file_controller.hpp"
+#include "controllers/fas_controller.hpp"
 #include "controllers/gpio_controller.hpp"
 #include "controllers/loops.hpp"
 #include "controllers/relay_controller.hpp"
@@ -19,6 +23,8 @@
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
+#include "interfaces/fas_link.hpp"
+#include "interfaces/fas_serial.hpp"
 #include "interfaces/gpio_manager.hpp"
 #include "interfaces/io_expander.hpp"
 #include "interfaces/mcc_daqhats.hpp"
@@ -46,7 +52,8 @@ using namespace std::chrono;
 #endif
 
 namespace {
-const std::string kCommandTopic = "nova/command";
+const std::string kCommandTopic  = "nova/command";
+const std::string kConsoleTopic  = "nova/console";
 const std::string kCommandSourceId = "novaOps";
 const int kI2CAddr = 0x20;
 
@@ -57,6 +64,9 @@ struct RuntimeConfig {
     int verbosity = NOVA_DEFAULT_VERBOSITY;
     int sample_interval_ms = NOVA_DEFAULT_SAMPLE_MS;
     int publish_interval_ms = NOVA_DEFAULT_PUBLISH_MS;
+    // FAS direct serial link — empty string disables FAS integration.
+    std::string fas_port;
+    int fas_baud = 460800;
 };
 
 bool parse_int(const std::string& text, int& value) {
@@ -111,6 +121,8 @@ void print_usage(const char* exe_name) {
               << "  --verbosity <0|1|2>                 0=quiet,1=info,2=debug\n"
               << "  --sample-ms <ms>                    DAQ sampling interval\n"
               << "  --publish-ms <ms>                   Telemetry publish interval\n"
+              << "  --fas-port <device>                 FAS RS-422 serial port (e.g. /dev/ttyUSB0)\n"
+              << "  --fas-baud <baud>                   FAS serial baud rate (default 460800)\n"
               << "  --help                              Show this message\n";
 }
 }
@@ -158,6 +170,19 @@ int main(int argc, char* argv[]) {
             config.publish_interval_ms = value;
             continue;
         }
+        if (arg == "--fas-port" && i + 1 < argc) {
+            config.fas_port = argv[++i];
+            continue;
+        }
+        if (arg == "--fas-baud" && i + 1 < argc) {
+            int value = 0;
+            if (!parse_int(argv[++i], value)) {
+                std::cerr << "Invalid FAS baud value.\n";
+                return 1;
+            }
+            config.fas_baud = value;
+            continue;
+        }
         std::cerr << "Unknown option: " << arg << "\n";
         print_usage(argv[0]);
         return 1;
@@ -178,9 +203,69 @@ int main(int argc, char* argv[]) {
         std::cout << "Upload URL: " << upload_url << std::endl;
         std::cout << "Sample interval (ms): " << config.sample_interval_ms << std::endl;
         std::cout << "Publish interval (ms): " << config.publish_interval_ms << std::endl;
+        if (!config.fas_port.empty()) {
+            std::cout << "FAS port: " << config.fas_port
+                      << " @ " << config.fas_baud << " baud" << std::endl;
+        }
     }
 
     TelemetryStore telemetry;
+
+    // ---- FAS direct serial link -------------------------------------------
+    // Constructed unconditionally; only opened/started if --fas-port is given.
+    std::unique_ptr<FasSerial> fas_serial;
+    std::unique_ptr<FasLink>   fas_link;
+    bool has_fas = false;
+
+    if (!config.fas_port.empty()) {
+        fas_serial = std::make_unique<FasSerial>(config.fas_port, config.fas_baud);
+        fas_link   = std::make_unique<FasLink>(*fas_serial);
+
+        // Wire FasLink callbacks → TelemetryStore.
+        fas_link->on_adc_sample([&telemetry](int board_id,
+                                             const rt_adc_sample_t& s) {
+            FasAdcSample sample;
+            sample.board_id = board_id;
+            sample.t_us     = s.t_us;
+            sample.v[0]     = s.ch0 * FasLink::kAdcInt16ToV;
+            sample.v[1]     = s.ch1 * FasLink::kAdcInt16ToV;
+            sample.mA[0]    = s.ch0 * FasLink::kAdcInt16ToMA;
+            sample.mA[1]    = s.ch1 * FasLink::kAdcInt16ToMA;
+            telemetry.push_fas_adc(sample);
+        });
+
+        fas_link->on_announce([&telemetry](const rt_announce_t& ann) {
+            // Build a human-readable board key mirroring the Python GS convention.
+            static const char* kKindNames[] = {"GS","FMC","EPB","IMC","RAB","PMB"};
+            const char* kind_str = (ann.board_kind < 6)
+                ? kKindNames[ann.board_kind] : "UNK";
+            FasBoardStatus bs;
+            bs.key    = std::string(kind_str) + ":" + std::to_string(ann.board_id);
+            bs.online = true;
+            telemetry.upsert_fas_board(bs);
+        });
+
+        fas_link->on_imc_status([&telemetry](int board_id,
+                                             const rt_imc_status_t& st) {
+            FasImcStatus imc;
+            imc.board_id    = board_id;
+            imc.armed       = (st.armed != 0);
+            imc.arm_line    = (st.arm_line != 0);
+            imc.disarm_line = (st.disarm_line != 0);
+            telemetry.set_fas_imc(imc);
+        });
+
+        // Route all FasSerial frames through FasLink.
+        fas_serial->set_frame_callback(
+            [&](uint32_t can_id, const uint8_t* data, size_t len) {
+                fas_link->handle_frame(can_id, data, len);
+            });
+
+        has_fas = fas_serial->open();
+        if (!has_fas) {
+            std::cerr << "FAS serial port failed to open; FAS integration disabled.\n";
+        }
+    }
 
     const std::string node_id = config.node_id;
 
@@ -297,6 +382,9 @@ int main(int argc, char* argv[]) {
     GpioController gpio_controller(has_gpio_manager ? gpio_manager.get() : nullptr,
                                    &data_logger);
     DataFileController data_file_controller(&data_logger, upload_url);
+    FasController fas_controller(has_fas ? fas_link.get() : nullptr);
+
+    std::atomic<bool> console_active{false};
 
     CommandRouter router(kCommandSourceId);
     router.register_handler("servo", [&servo_controller](const boost::json::object& cmd) {
@@ -310,6 +398,16 @@ int main(int argc, char* argv[]) {
     });
     router.register_handler("data_file", [&data_file_controller](const boost::json::object& cmd) {
         data_file_controller.handle_command(cmd);
+    });
+    router.register_handler("fas", [&fas_controller](const boost::json::object& cmd) {
+        fas_controller.handle_command(cmd);
+    });
+    router.register_handler("console", [&console_active](const boost::json::object& cmd) {
+        auto* v = cmd.if_contains("action");
+        if (!v || !v->is_string()) return;
+        std::string act{v->as_string()};
+        if (act == "start")      console_active.store(true,  std::memory_order_relaxed);
+        else if (act == "stop")  console_active.store(false, std::memory_order_relaxed);
     });
 
     auto cli = std::make_shared<mqtt::async_client>(broker_address, node_id);
@@ -368,6 +466,50 @@ int main(int argc, char* argv[]) {
     if (has_gpio_manager) {
         std::thread gpio_sampler(gpio_sampler_loop, std::ref(*gpio_manager), std::ref(telemetry));
         gpio_sampler.detach();
+    }
+
+    if (has_fas) {
+        // Publish raw FAS frames to nova/console when console mode is active.
+        fas_link->on_raw_frame([&](uint32_t can_id,
+                                   const uint8_t* data, size_t len) {
+            if (!console_active.load(std::memory_order_relaxed)) return;
+            if (!cli || !cli->is_connected()) return;
+
+            rt_can_id_t cid = rt_can_id_unpack(can_id);
+            std::ostringstream hex;
+            hex << std::hex << std::setfill('0');
+            for (size_t i = 0; i < len; ++i) {
+                if (i) hex << ' ';
+                hex << std::setw(2) << static_cast<int>(data[i]);
+            }
+
+            boost::json::object frame;
+            frame["source"]     = "novaGround";
+            frame["type"]       = "fas_frame";
+            frame["can_id"]     = can_id;
+            frame["msg_type"]   = cid.msg;
+            frame["board_kind"] = cid.board_kind;
+            frame["board_id"]   = cid.board_id;
+            frame["channel"]    = cid.channel;
+            frame["data_hex"]   = hex.str();
+
+            try {
+                cli->publish(kConsoleTopic,
+                             boost::json::serialize(frame))->wait_for(
+                    std::chrono::milliseconds(50));
+            } catch (...) {}
+        });
+
+        // Serial read loop — blocks in read(); must start before discovery.
+        std::thread fas_reader([&fas_serial]{ fas_serial->run(); });
+        fas_reader.detach();
+
+        // Periodic discovery requests + board timeout checks.
+        std::thread fas_disc(fas_discovery_loop,
+                             std::ref(*fas_link), std::ref(telemetry));
+        fas_disc.detach();
+
+        std::cout << "FAS integration active on " << config.fas_port << std::endl;
     }
 
     std::thread consumer(consumer_loop, cli, std::ref(router));

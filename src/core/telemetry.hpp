@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <shared_mutex>
+#include <string>
 #include <vector>
 
 struct SensorSample {
@@ -19,8 +20,37 @@ struct ServoTelemetry {
     bool enabled = false;
 };
 
+// ---- FAS-specific telemetry types -----------------------------------------
+// hat_id >= 100 is reserved for FAS EPB boards (hat_id = 100 + board_id).
+// This lets FAS ADC samples flow through the existing SensorSample path
+// without colliding with real MCC DAQ hat addresses (0-7).
+
+// One timestamped 2-channel ADC sample from an EPB.
+struct FasAdcSample {
+    int board_id   = 0;      // EPB board_id (0-7)
+    uint32_t t_us  = 0;      // firmware timestamp on FMC timeline (µs, wraps ~71 min)
+    double v[2]    = {};     // volts, ch0 and ch1
+    double mA[2]   = {};     // milliamps, ch0 and ch1
+};
+
+// Online / offline status for one board on the CAN bus.
+struct FasBoardStatus {
+    std::string key;         // "EPB:0", "FMC:0", "PMB:0", etc.
+    bool online      = false;
+    uint32_t uptime_ms = 0;
+};
+
+// IMC (igniter) arm/disarm state echoed by the EPB.
+struct FasImcStatus {
+    int board_id       = 0;
+    bool armed         = false;
+    bool arm_line      = false;
+    bool disarm_line   = false;
+};
+
 class TelemetryStore {
 public:
+    // ---- Existing interface (unchanged) ------------------------------------
     void set_sensors(std::vector<SensorSample> samples);
     std::vector<SensorSample> snapshot_sensors() const;
 
@@ -33,10 +63,30 @@ public:
     void upsert_servo_state(int id, uint16_t angle, bool enabled);
     std::vector<ServoTelemetry> snapshot_servo_states() const;
 
+    // ---- FAS interface ----------------------------------------------------
+
+    // Append incoming ADC samples. Also mirrors each sample into sensors_ as a
+    // SensorSample with hat_id = 100 + board_id so the existing publisher loop
+    // and DataLogger pick them up without modification.
+    void push_fas_adc(const FasAdcSample& sample);
+    // Returns up to max_samples of the most recently pushed samples, newest last.
+    std::vector<FasAdcSample> snapshot_fas_adc(size_t max_samples = 256) const;
+
+    void upsert_fas_board(FasBoardStatus status);
+    std::vector<FasBoardStatus> snapshot_fas_boards() const;
+
+    void set_fas_imc(FasImcStatus status);
+    FasImcStatus snapshot_fas_imc() const;
+
 private:
     mutable std::shared_mutex mutex_;
     std::vector<SensorSample> sensors_;
     std::map<int, int> gpio_states_;
     std::bitset<16> relay_state_;
     std::vector<ServoTelemetry> servo_states_;
+
+    // FAS state
+    std::vector<FasAdcSample> fas_adc_;
+    std::map<std::string, FasBoardStatus> fas_boards_;
+    FasImcStatus fas_imc_;
 };
