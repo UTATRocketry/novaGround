@@ -89,10 +89,9 @@ void DataFileController::handle_command(const boost::json::object& cmd) {
 
     if (action == "stop_data_saving") {
         logger_->stop();
-        const std::string sensor_path = logger_->last_sensor_path();
-        const std::string actuator_path = logger_->last_actuator_path();
-        upload_file(sensor_path, upload_url_);
-        upload_file(actuator_path, upload_url_);
+        upload_file(logger_->last_sensor_path(),  upload_url_);
+        upload_file(logger_->last_actuator_path(), upload_url_);
+        upload_file(logger_->last_fas_path(),      upload_url_);
         return;
     }
 

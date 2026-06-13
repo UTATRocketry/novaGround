@@ -50,6 +50,11 @@ std::string DataLogger::last_actuator_path() const {
     return last_actuator_path_;
 }
 
+std::string DataLogger::last_fas_path() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_fas_path_;
+}
+
 void DataLogger::log_sensor_row(double timestamp_ms, const std::vector<double>& values) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!active_ || !sensor_file_.is_open()) {
@@ -72,6 +77,18 @@ void DataLogger::log_sensor_row(double timestamp_ms, const std::vector<double>& 
         }
     }
     sensor_file_ << "\n";
+}
+
+void DataLogger::log_fas_row(int board_id, uint32_t t_us,
+                              double ch0_V, double ch1_V,
+                              double ch0_mA, double ch1_mA) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_ || !fas_file_.is_open()) {
+        return;
+    }
+    fas_file_ << board_id << "," << t_us << ","
+              << ch0_V  << "," << ch1_V  << ","
+              << ch0_mA << "," << ch1_mA << "\n";
 }
 
 void DataLogger::update_gpio(int pin, int state) {
@@ -153,11 +170,13 @@ bool DataLogger::open_files(const std::string& base_filename) {
     }
     std::string sensor_path = data_dir_ + "/" + safe_name + "_sensors.csv";
     std::string actuator_path = data_dir_ + "/" + safe_name + "_actuators.csv";
+    std::string fas_path = data_dir_ + "/" + safe_name + "_FAS.csv";
 
     sensor_file_.open(sensor_path, std::ios::out | std::ios::trunc);
     actuator_file_.open(actuator_path, std::ios::out | std::ios::trunc);
+    fas_file_.open(fas_path, std::ios::out | std::ios::trunc);
 
-    if (!sensor_file_.is_open() || !actuator_file_.is_open()) {
+    if (!sensor_file_.is_open() || !actuator_file_.is_open() || !fas_file_.is_open()) {
         std::cerr << "Failed to open data files for writing." << std::endl;
         close_files();
         return false;
@@ -165,9 +184,11 @@ bool DataLogger::open_files(const std::string& base_filename) {
 
     sensor_file_ << join_headers(sensor_headers_) << "\n";
     actuator_file_ << join_headers(actuator_headers_) << "\n";
+    fas_file_ << "board_id,t_us,ch0_V,ch1_V,ch0_mA,ch1_mA\n";
 
     last_sensor_path_ = sensor_path;
     last_actuator_path_ = actuator_path;
+    last_fas_path_ = fas_path;
 
     return true;
 }
@@ -178,6 +199,9 @@ void DataLogger::close_files() {
     }
     if (actuator_file_.is_open()) {
         actuator_file_.close();
+    }
+    if (fas_file_.is_open()) {
+        fas_file_.close();
     }
 }
 

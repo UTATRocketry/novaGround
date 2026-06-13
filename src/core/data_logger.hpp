@@ -22,8 +22,12 @@ public:
     bool is_active() const;
     std::string last_sensor_path() const;
     std::string last_actuator_path() const;
+    std::string last_fas_path() const;
 
     void log_sensor_row(double timestamp_ms, const std::vector<double>& values);
+    void log_fas_row(int board_id, uint32_t t_us,
+                     double ch0_V, double ch1_V,
+                     double ch0_mA, double ch1_mA);
 
     void update_gpio(int pin, int state);
     void update_relay_state(const std::bitset<16>& state);
@@ -40,9 +44,11 @@ private:
     mutable std::mutex mutex_;
     std::ofstream sensor_file_;
     std::ofstream actuator_file_;
+    std::ofstream fas_file_;
     bool active_ = false;
     std::string last_sensor_path_;
     std::string last_actuator_path_;
+    std::string last_fas_path_;
 
     std::map<int, int> gpio_states_;
     std::bitset<16> relay_state_;

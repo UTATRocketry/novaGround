@@ -222,8 +222,8 @@ int main(int argc, char* argv[]) {
         fas_link   = std::make_unique<FasLink>(*fas_serial);
 
         // Wire FasLink callbacks → TelemetryStore.
-        fas_link->on_adc_sample([&telemetry](int board_id,
-                                             const rt_adc_sample_t& s) {
+        fas_link->on_adc_sample([&telemetry, &data_logger](int board_id,
+                                                            const rt_adc_sample_t& s) {
             FasAdcSample sample;
             sample.board_id = board_id;
             sample.t_us     = s.t_us;
@@ -232,6 +232,9 @@ int main(int argc, char* argv[]) {
             sample.mA[0]    = s.ch0 * FasLink::kAdcInt16ToMA;
             sample.mA[1]    = s.ch1 * FasLink::kAdcInt16ToMA;
             telemetry.push_fas_adc(sample);
+            data_logger.log_fas_row(board_id, s.t_us,
+                                    sample.v[0], sample.v[1],
+                                    sample.mA[0], sample.mA[1]);
         });
 
         fas_link->on_announce([&telemetry](const rt_announce_t& ann) {
