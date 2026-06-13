@@ -21,9 +21,6 @@ struct ServoTelemetry {
 };
 
 // ---- FAS-specific telemetry types -----------------------------------------
-// hat_id >= 100 is reserved for FAS EPB boards (hat_id = 100 + board_id).
-// This lets FAS ADC samples flow through the existing SensorSample path
-// without colliding with real MCC DAQ hat addresses (0-7).
 
 // One timestamped 2-channel ADC sample from an EPB.
 struct FasAdcSample {

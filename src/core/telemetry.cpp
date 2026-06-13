@@ -69,28 +69,6 @@ void TelemetryStore::push_fas_adc(const FasAdcSample& sample) {
     }
     fas_adc_.push_back(sample);
 
-    // Mirror ch0 into the shared SensorSample store so the existing publisher
-    // and DataLogger see it. hat_id = 100 + board_id; channel_id = 0 for ch0,
-    // 1 for ch1.
-    double ts = now_ms();
-    for (int ch = 0; ch < 2; ++ch) {
-        SensorSample ss;
-        ss.hat_id       = 100 + sample.board_id;
-        ss.channel_id   = ch;
-        ss.value        = sample.v[ch];
-        ss.timestamp_ms = ts;
-
-        // Upsert by (hat_id, channel_id).
-        bool found = false;
-        for (auto& s : sensors_) {
-            if (s.hat_id == ss.hat_id && s.channel_id == ss.channel_id) {
-                s = ss;
-                found = true;
-                break;
-            }
-        }
-        if (!found) sensors_.push_back(ss);
-    }
 }
 
 std::vector<FasAdcSample> TelemetryStore::snapshot_fas_adc(size_t max_samples) const {

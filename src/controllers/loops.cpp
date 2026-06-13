@@ -11,7 +11,8 @@ namespace json = boost::json;
 using namespace std::chrono;
 
 namespace {
-const std::string kTelemetryTopic    = "nova/telemetry";
+const std::string kEngineTopic = "nova/telemetry/engine";
+const std::string kFlightTopic = "nova/telemetry/flight";
 constexpr double  kBoardTimeoutS     = 3.0;   // mirrors Python GS HEARTBEAT_TIMEOUT_S
 constexpr int     kDiscoveryIntervalS = 2;
 }
@@ -61,18 +62,64 @@ void publisher_loop(mqtt::async_client_ptr cli,
             json_fas_imc["arm_line"]    = imc.arm_line;
             json_fas_imc["disarm_line"] = imc.disarm_line;
 
-            json::object payload;
-            payload["source"]     = source_id;
-            payload["sensors"]    = json_sensor_data;
-            payload["gpios"]      = json_gpio_data;
-            payload["fas_boards"] = json_fas_boards;
-            payload["fas_imc"]    = json_fas_imc;
+            // FAS ADC samples — published as source="FAS" with node/channel keys
+            // matching the config bindings (e.g. node="EPB_1", channel=0).
+            // Node string is derived from the board key ("EPB:0" → "EPB_1").
+            json::array json_fas_sensors;
+            {
+                // Collapse to latest sample per (board_id, channel).
+                std::map<std::pair<int,int>, const FasAdcSample*> latest;
+                auto adc_snap = telemetry.snapshot_fas_adc();
+                for (const auto& s : adc_snap)
+                    for (int ch = 0; ch < 2; ++ch)
+                        latest[{s.board_id, ch}] = &s;
 
-            std::string s_payload = json::serialize(payload);
+                // Build board_id → node_string map from the board status keys.
+                std::map<int, std::string> board_node;
+                for (const auto& b : telemetry.snapshot_fas_boards()) {
+                    // key format: "EPB:0" → node "EPB_1" (1-based)
+                    auto colon = b.key.find(':');
+                    if (colon == std::string::npos) continue;
+                    std::string kind = b.key.substr(0, colon);
+                    int bid = std::stoi(b.key.substr(colon + 1));
+                    board_node[bid] = kind + "_" + std::to_string(bid + 1);
+                }
+
+                double ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+
+                for (const auto& [key, sp] : latest) {
+                    auto node_it = board_node.find(key.first);
+                    if (node_it == board_node.end()) continue;
+                    json::object se;
+                    se["node"]      = node_it->second;
+                    se["channel"]   = key.second;
+                    se["value"]     = (key.second == 0) ? sp->v[0] : sp->v[1];
+                    se["timestamp"] = static_cast<int64_t>(ts);
+                    json_fas_sensors.push_back(se);
+                }
+            }
+
+            json::object engine_payload;
+            engine_payload["source"]  = source_id;
+            engine_payload["sensors"] = json_sensor_data;
+            engine_payload["gpios"]   = json_gpio_data;
+
+            json::object fas_sensor_payload;
+            fas_sensor_payload["source"]  = "FAS";
+            fas_sensor_payload["sensors"] = json_fas_sensors;
+
+            json::object flight_payload;
+            flight_payload["source"]     = source_id;
+            flight_payload["fas_boards"] = json_fas_boards;
+            flight_payload["fas_imc"]    = json_fas_imc;
 
             if (cli && cli->is_connected()) {
                 try {
-                    cli->publish(kTelemetryTopic, s_payload)->wait();
+                    cli->publish(kEngineTopic, json::serialize(engine_payload))->wait();
+                    if (!json_fas_sensors.empty())
+                        cli->publish(kEngineTopic, json::serialize(fas_sensor_payload))->wait();
+                    cli->publish(kFlightTopic, json::serialize(flight_payload))->wait();
                 } catch (const std::exception& e) {
                     std::cerr << "Publish failed: " << e.what() << std::endl;
                 }
