@@ -221,21 +221,8 @@ int main(int argc, char* argv[]) {
         fas_serial = std::make_unique<FasSerial>(config.fas_port, config.fas_baud);
         fas_link   = std::make_unique<FasLink>(*fas_serial);
 
-        // Wire FasLink callbacks → TelemetryStore.
-        fas_link->on_adc_sample([&telemetry, &data_logger](int board_id,
-                                                            const rt_adc_sample_t& s) {
-            FasAdcSample sample;
-            sample.board_id = board_id;
-            sample.t_us     = s.t_us;
-            sample.v[0]     = s.ch0 * FasLink::kAdcInt16ToV;
-            sample.v[1]     = s.ch1 * FasLink::kAdcInt16ToV;
-            sample.mA[0]    = s.ch0 * FasLink::kAdcInt16ToMA;
-            sample.mA[1]    = s.ch1 * FasLink::kAdcInt16ToMA;
-            telemetry.push_fas_adc(sample);
-            data_logger.log_fas_row(board_id, s.t_us,
-                                    sample.v[0], sample.v[1],
-                                    sample.mA[0], sample.mA[1]);
-        });
+        // Wire FasLink ADC callback → TelemetryStore + data file.
+        // Registered after data_logger is constructed (see second has_fas block below).
 
         fas_link->on_announce([&telemetry](const rt_announce_t& ann) {
             // Build a human-readable board key mirroring the Python GS convention.
@@ -472,6 +459,22 @@ int main(int argc, char* argv[]) {
     }
 
     if (has_fas) {
+        // Single ADC callback: update telemetry store and log to _FAS file.
+        fas_link->on_adc_sample([&telemetry, &data_logger](int board_id,
+                                                            const rt_adc_sample_t& s) {
+            FasAdcSample sample;
+            sample.board_id = board_id;
+            sample.t_us     = s.t_us;
+            sample.v[0]     = s.ch0 * FasLink::kAdcInt16ToV;
+            sample.v[1]     = s.ch1 * FasLink::kAdcInt16ToV;
+            sample.mA[0]    = s.ch0 * FasLink::kAdcInt16ToMA;
+            sample.mA[1]    = s.ch1 * FasLink::kAdcInt16ToMA;
+            telemetry.push_fas_adc(sample);
+            data_logger.log_fas_row(board_id, s.t_us,
+                                    sample.v[0], sample.v[1],
+                                    sample.mA[0], sample.mA[1]);
+        });
+
         // Publish raw FAS frames to nova/console when console mode is active.
         fas_link->on_raw_frame([&](uint32_t can_id,
                                    const uint8_t* data, size_t len) {
@@ -491,7 +494,7 @@ int main(int argc, char* argv[]) {
             frame["type"]       = "fas_frame";
             frame["can_id"]     = can_id;
             frame["msg_type"]   = cid.msg;
-            frame["board_kind"] = cid.board_kind;
+            frame["board_kind"] = cid.kind;
             frame["board_id"]   = cid.board_id;
             frame["channel"]    = cid.channel;
             frame["data_hex"]   = hex.str();
