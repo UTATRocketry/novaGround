@@ -315,9 +315,18 @@ int main(int argc, char* argv[]) {
     auto cli = std::make_shared<mqtt::async_client>(broker_address, node_id);
 
     auto connOpts = mqtt::connect_options_builder()
-                        .clean_session(false)
+                        .clean_session(true)
                         .automatic_reconnect(seconds(1), seconds(10))
                         .finalize();
+    
+    {
+        auto topics = mqtt::string_collection::create({kCommandTopic});
+        const std::vector<int> qos{1};
+        cli->set_connected_handler([cli, topics, qos](const std::string& /*cause*/) {
+            cli->subscribe(topics, qos);
+            std::cout << "Subscribed to " << kCommandTopic << std::endl;
+        });
+    }
 
     cli->start_consuming();
 
@@ -329,12 +338,6 @@ int main(int argc, char* argv[]) {
                 auto connResponse = rsp->get_connect_response();
                 connected = true;
                 std::cout << "Connected to MQTT broker" << std::endl;
-
-                if (!connResponse.is_session_present()) {
-                    auto topics = mqtt::string_collection::create({kCommandTopic});
-                    const std::vector<int> qos{1};
-                    cli->subscribe(topics, qos);
-                }
             }
         } catch (const std::exception& e) {
             std::cerr << "MQTT connect failed: " << e.what() << std::endl;

@@ -10,7 +10,7 @@ namespace json = boost::json;
 using namespace std::chrono;
 
 namespace {
-const std::string kTelemetryTopic = "nova/telemetry";
+const std::string kTelemetryTopic = "nova/telemetry/engine";
 }
 
 void publisher_loop(mqtt::async_client_ptr cli,
