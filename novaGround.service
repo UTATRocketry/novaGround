@@ -1,13 +1,51 @@
+# novaGround systemd unit — installed to /etc/systemd/system/novaGround.service
+# by ./nova-pi.sh install. Do not edit in place; edit this file and re-run the
+# installer so the change is version-controlled.
+#
+# Runtime settings (broker address, FAS port, which binary to run) live in
+# /etc/nova/novaGround.env so this unit never needs editing on the Pi.
+
 [Unit]
-Description= novaGround Service
-After=network.target
+Description=novaGround telemetry and control daemon
+Documentation=https://github.com/novaGround
+# network-online, not network: novaGround dials out to the MQTT broker on the
+# ops PC immediately at startup. Plain network.target fires before the ethernet
+# link has an address, so the first connection attempt fails on every boot.
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=./Desktop/novaGround/run.sh
-WorkingDirectory=/home/pi
-StandardOutput=inherit
-StandardError=inherit
+Type=simple
+User=admin
+Group=admin
+
+WorkingDirectory=/home/admin/prod/novaGround
+
+# Defaults; every value can be overridden in /etc/nova/novaGround.env.
+Environment="NOVA_TARGET=novaGround"
+Environment="NOVA_BROKER=192.168.137.1"
+Environment="NOVA_BACKEND=192.168.137.1:8000"
+Environment="NOVA_EXTRA_ARGS="
+EnvironmentFile=-/etc/nova/novaGround.env
+
+# systemd requires an absolute path here — a relative ExecStart is why the
+# previous unit never started. start.sh assembles the argument list from the
+# environment above.
+ExecStart=/home/admin/prod/novaGround/start.sh
+
 Restart=always
+RestartSec=5
+# Do not give up after the default 5 attempts: a ground station left running
+# unattended should keep retrying rather than stay dead until someone notices.
+StartLimitIntervalSec=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=novaGround
+
+# The DAQ HAT and GPIO access need the real device nodes; no sandboxing that
+# would hide /dev from the process.
+PrivateTmp=false
 
 [Install]
 WantedBy=multi-user.target
