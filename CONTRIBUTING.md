@@ -10,6 +10,12 @@ Read that first.** In short:
 - CI green + 1 approval (a lead's if it can move hardware), then **Squash and merge**.
 - Leads bring tested releases into `main`; you never merge into `main` yourself.
 
+**Where to work:** clone this repo into the `dev/` folder of a Nova-Collected
+clone, e.g. `Nova/dev/novaGround` (see "Getting started as a developer" in the
+Nova-Collected README), or anywhere else you like. Branch from `dev` there.
+Never work in the `prod/` or `pi/` submodules of Nova-Collected: they show the
+released version and are overwritten when it changes.
+
 This file only covers what is specific to this repo.
 
 ## Before you open a PR
@@ -30,9 +36,10 @@ and line endings. **Say in the PR that it compiled, and where.**
 ./run.sh --target novaMock
 ```
 
-`novaMock` runs the full program against simulated boards. `run.sh` warns if
-the systemd service is running; the two can't share the serial port or broker
-client ID.
+`novaMock` runs the full program against simulated boards. Go through the
+[testing procedure](https://github.com/UTATRocketry/Nova-Collected/blob/main/docs/development/testing-procedure.md)
+against it. `run.sh` warns if the systemd service is running; the two can't
+share the serial port or broker client ID.
 
 ## Scopes for PR titles
 
