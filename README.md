@@ -34,6 +34,7 @@ novaGround.service    the systemd unit
 On a Raspberry Pi 4 with **Raspberry Pi OS (Legacy, 64-bit)**:
 
 ```bash
+sudo chmod +x install.sh
 sudo ./install.sh
 ```
 
