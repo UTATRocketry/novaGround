@@ -1,136 +1,79 @@
-# Nova Ground
+# novaGround
 
-## Build and Formatting tools
-Note: novaGround must be installed and run on a raspberry pi 4 running the Raspberry Pi OS (Legacy, 64-bit) as the MCC DAQHat library does not work with Debian Trixie
+The hardware side of the Nova ground station. It runs on the Raspberry Pi in the
+Ground Station Suitcase, reads the MCC DAQ HATs, drives the relay board and
+servo driver, publishes telemetry over MQTT and executes the commands the
+NovaOps backend sends. C++17, built with meson, run by systemd.
 
-### Installing and using meson
+> [!CAUTION]
+> This program switches relays and moves servos on real hardware. Test on
+> `novaMock` first, and get a lead's review for anything that changes how
+> actuators are driven ([CONTRIBUTING.md](CONTRIBUTING.md)).
+
+## Repo structure
 
 ```
-    sudo apt install build-essential clang
-```
-
-We use meson as our build tool in this project. It can be installed with pip:
-```
-    sudo apt install meson
-```
-Meson does out of src builds therefore we will use `novaGround/build` directory as standard. I think we will likely add more build directories in the future for testing and release builds. But for development use `build`. To set up the build directory and use clang for compilation, run the following:
-```
-    cd novaGround
-    CC=clang CXX=clang++ meson setup build
-```
-This will set up the build directory `build`. To compile, run the following:
-```
-    meson compile -C build
-```
-The `-C` flag specifies which build directory to use.
-
-## Dependencies
-Note that boost libraries will also need to be installed.
-```
-wget https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.bz2
-tar xf boost_1_81_0.tar.bz2
-cd boost_1_81_0
-./bootstrap.sh --prefix=/usr/local
-./b2
-sudo ./b2 install
-
-echo 'export BOOST_ROOT=/usr/local' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
-echo 'export CPLUS_INCLUDE_PATH=/usr/local/include:$CPLUS_INCLUDE_PATH' >> ~/.bashrc
+src/
+├── main.cpp          options, wiring, thread start-up
+├── interfaces/       hardware drivers: DAQ HATs, GPIO, TCA9535 relays, PCA9685 servos
+├── controllers/      device logic and the sampling/publishing loops
+├── core/             command router, telemetry store, data logging
+└── utils/
+docs/setup.md         install, build, run and configure in detail
+install.sh            one-time Pi setup
+nova-pi.sh            install, build, start/stop, status, logs, deploy, doctor
+start.sh              service entry point (systemd runs this)
+run.sh                interactive tmux session, for bench work
+novaGround.service    the systemd unit
 ```
 
-also:
-```
-    sudo apt-get install libpaho-mqtt-dev
-    sudo apt install libgpiod-dev
-    sudo apt-get install libcurl4-openssl-dev
-```
+## Getting started
 
+### Set up
 
-Install the daqhats library
-```
-    git clone https://github.com/mccdaq/daqhats.git
-    cd /daqhats
-    sudo ./install.sh
-```
-[documentation](https://mccdaq.github.io/daqhats/install.html#installation)
-
-Install WiringPI for the servo drivers
-```
-# fetch the source
-git clone https://github.com/WiringPi/WiringPi.git
-cd WiringPi
-
-# build the package
-./build debian
-mv debian-template/wiringpi_3.18_arm64.deb .
-
-# install it
-sudo apt install ./wiringpi-3.x.deb
-```
-<!-- ### Using clang-tidy (note still trying to make this work)
-There is a `.clang_tidy` file in the directory that will perform linting on our code. Meson will automatically run this if you have `clang-tidy` available on your system. On mac this can be done by first making sure `llvm` is installed:
-```
-    brew install llvm
-```
-You can determine the location of clang-tidy with
-```
-    brew list llvm | grep bin/clang-tidy
-```
-Then you can set up an alias in `~/.zshrc` or `~/.bashrc` depending on what shell you use. Make sure to change the directory if it's different to mine:
-```
-    # For zsh
-    echo "alias clang-tidy=\"/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy\"" >> ~/.zshrc
-
-    # For bash
-    echo "alias clang-tidy=\"/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy\"" >> ~/.bashrc
-``` -->
-## Build Targets
-This repository builds three executables, each with its own build ID and default sampling/publish rates:
-
-1. `novaGround` (build ID `novaGround`, sample `1ms`, publish `50ms`)
-2. `novaThermo` (build ID `novaThermo`, sample `100ms`, publish `250ms`)
-3. `novaMock` (build ID `novaMock`, sample `100ms`, publish `250ms`, hardware init disabled)
-
-All targets are built by running:
-```
-    meson compile -C build
-```
-
-## Running
-In order to run the program, an MQTT broker should be available (defaults to `localhost:1883`).
-
-Examples:
-```
-    ./build/novaGround
-    ./build/novaThermo
-    ./build/novaMock
-```
-
-## Runtime Options
-You can override broker/backend endpoints and sampling/publish rates at runtime:
+On a Raspberry Pi 4 with **Raspberry Pi OS (Legacy, 64-bit)**:
 
 ```bash
-./build/novaGround --publish-ms 250 --verbosity 2
-./build/novaGround --broker 192.168.137.1 --backend 192.168.137.1:8000 --fas-port /dev/ttyUSB0
-./build/novaThermo --broker 192.168.0.1 --backend 192.168.0.1:8000
+sudo ./install.sh
 ```
 
-Options:
-1. `--broker <host[:port]|mqtt://...>`: MQTT broker address (default `localhost:1883`)
-2. `--backend <host[:port]|http://...>`: Backend base URL for data-file uploads (default `http://localhost:8000`)
-3. `--verbosity <0|1|2>`: 0=quiet, 1=info, 2=debug
-4. `--sample-ms <ms>`: DAQ sampling interval
-5. `--publish-ms <ms>`: Telemetry publish interval
+This installs every dependency, builds the code and installs the service.
 
-## Data Logging
-Data files are automatically prefixed with the build ID. Example:
-`novaGround_someName_sensors.csv` and `novaGround_someName_actuators.csv`.
+### Run
 
-## Hardware Setup
-When installing multiple hats, you must install the appropriate address jumpers onto address header locations A0-A2 of the new HAT board. The recommended addressing method is to have the addresses increment from 0 as the boards are installed, i.e. 0, 1, 2, and so forth. **There must always be a board at address 0.**
-
-If you change the board stackup and have more than one HAT board attached, you must update the saved EEPROM images for the library to have the correct board information. You can use the DAQ HAT Manager or the command:
+```bash
+meson compile -C build
+./build/novaMock --broker localhost          # no hardware needed
+sudo ./nova-pi.sh status                     # the installed service
 ```
-    sudo daqhats_read_eeproms
+
+Targets, options and the service settings in `/etc/nova/novaGround.env`:
+[docs/setup.md](docs/setup.md).
+
+### Troubleshoot
+
+```bash
+sudo ./nova-pi.sh doctor
+journalctl -u novaGround -f
 ```
+
+| Symptom | Fix |
+|---|---|
+| Service restarts in a loop with "Unknown option" | `NOVA_FAS_PORT` is set in `/etc/nova/novaGround.env`. Empty it ([details](docs/setup.md#run)) |
+| A DAQ HAT isn't found | Check the address jumpers, then `sudo daqhats_read_eeproms` |
+| Telemetry flickers in the UI | `run.sh` and the service are both running. Stop one |
+| Build fails on Debian Trixie | The daqhats library needs Raspberry Pi OS (Legacy, 64-bit) |
+
+More: [Nova SUPPORT.md](https://github.com/UTATRocketry/Nova-Collected/blob/main/SUPPORT.md).
+
+## More information
+
+| To...                            | Read                                                                                                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Install, build, run, configure   | [docs/setup.md](docs/setup.md)                                                                                                                                                                                     |
+| Set up the Pi on the station     | [Raspberry Pi setup](https://github.com/UTATRocketry/Nova-Collected/blob/main/docs/deployment/novaground-setup.md)                                                                                                 |
+| Deploy a release to the Pi       | [RELEASING.md](https://github.com/UTATRocketry/Nova-Collected/blob/main/RELEASING.md)                                                                                                                              |
+| Look up MQTT topics and payloads | [MQTT topics](https://github.com/UTATRocketry/Nova-Collected/blob/main/docs/api/mqtt-topics.md)                                                                                                                    |
+| Follow code style and layout     | [Style](https://github.com/UTATRocketry/Nova-Collected/blob/main/docs/development/style.md) · [Organization](https://github.com/UTATRocketry/Nova-Collected/blob/main/docs/development/organization.md#novaground) |
+| See what changed in each release | [CHANGELOG.md](CHANGELOG.md)                                                                                                                                                                                       |
+| Contribute                       | [CONTRIBUTING.md](CONTRIBUTING.md)                                                                                                                                                                                 |
