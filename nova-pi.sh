@@ -10,7 +10,13 @@
 #      ./nova-pi.sh install [--env prod|dev] [--target novaGround|novaThermo|novaMock]
 #      ./nova-pi.sh build   [--env prod|dev]
 #      ./nova-pi.sh start | stop | restart | status | logs | update | doctor
+#      ./nova-pi.sh deploy [<tag>|<commit>]
 #      ./nova-pi.sh uninstall
+#
+#  deploy puts a pinned Nova release into prod: with a tag (v2026.10.04) it
+#  asks the Nova Console on the ops PC which novaGround commit that release
+#  pins; with no argument it uses the newest stable release. The commit comes
+#  from GitHub, or - offline - from the dev checkout it was tested in.
 #
 #  Production runs under systemd (Restart=always, enabled at boot). Dev is run
 #  by hand with ./run.sh, exactly as dev on the Windows PC is Manual-start.
@@ -23,13 +29,19 @@ SERVICE_NAME="novaGround"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 ENV_DIR="/etc/nova"
 ENV_FILE="${ENV_DIR}/novaGround.env"
+# What prod is running, written by `deploy`.
+DEPLOYED_FILE="${ENV_DIR}/deployed"
 
 # Defaults written into the env file on first install.
 DEFAULT_BROKER="192.168.137.1"
 DEFAULT_BACKEND="192.168.137.1:8000"
 DEFAULT_TARGET="novaGround"
+# The Nova Console on the ops PC serves the release index (/api/releases).
+DEFAULT_CONSOLE="http://192.168.137.1:8080"
 
 ENVIRONMENT="prod"
+DEPLOY_REF=""
+RELEASE_LABEL=""
 TARGET=""
 FOLLOW="false"
 
@@ -39,7 +51,7 @@ ok()   { echo "${GREEN}    $*${RESET}"; }
 warn() { echo "${YELLOW}    $*${RESET}"; }
 err()  { echo "${RED}    $*${RESET}" >&2; }
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
 
 need_root() {
   if [[ $EUID -ne 0 ]]; then
@@ -61,8 +73,12 @@ while [[ $# -gt 0 ]]; do
     --env)     ENVIRONMENT="$2"; shift 2 ;;
     --target)  TARGET="$2"; shift 2 ;;
     -f|--follow) FOLLOW="true"; shift ;;
+    --release) RELEASE_LABEL="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
-    *) err "Unknown argument: $1"; usage; exit 1 ;;
+    -*) err "Unknown argument: $1"; usage; exit 1 ;;
+    *)
+      if [[ "$ACTION" == "deploy" && -z "$DEPLOY_REF" ]]; then DEPLOY_REF="$1"; shift
+      else err "Unknown argument: $1"; usage; exit 1; fi ;;
   esac
 done
 
@@ -177,6 +193,9 @@ do_status() {
     since="$(systemctl show -p ActiveEnterTimestamp --value "$SERVICE_NAME" 2>/dev/null)"
     [[ -n "$since" ]] && echo "    since        $since"
   fi
+  if [[ -f "$DEPLOYED_FILE" ]]; then
+    echo "    release      $(grep -oP '^release=\K.*' "$DEPLOYED_FILE") ($(grep -oP '^commit=\K.{7}' "$DEPLOYED_FILE"), $(grep -oP '^deployed=\K.*' "$DEPLOYED_FILE"))"
+  fi
 
   if [[ -f "$ENV_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -258,6 +277,87 @@ do_update() {
   ok "Update complete."
 }
 
+resolve_release_commit() {
+  # tag (or "stable") -> novaGround commit, via the Nova Console's release index.
+  local which="${1:-stable}"
+  local console="${NOVA_CONSOLE_URL:-$DEFAULT_CONSOLE}"
+  python3 - "$console" "$which" <<'PY'
+import json, sys, urllib.request
+console, which = sys.argv[1], sys.argv[2]
+try:
+    with urllib.request.urlopen(f"{console}/api/releases/{which}", timeout=5) as resp:
+        release = json.load(resp)
+except Exception as exc:  # noqa: BLE001
+    sys.exit(f"could not ask {console} about '{which}': {exc}")
+commit = ((release.get("pins") or {}).get("pi/novaGround") or {}).get("commit")
+if not commit:
+    sys.exit(f"release '{which}' pins no novaGround commit")
+print(release.get("tag", which), commit)
+PY
+}
+
+do_deploy() {
+  need_root
+  if [[ "$ENVIRONMENT" != "prod" ]]; then
+    err "deploy always targets prod ($PROD_DIR); dev is updated with git directly."; exit 1
+  fi
+  local dir="$PROD_DIR"
+  [[ -d "$dir" ]] || { err "Missing prod repo: $dir"; exit 1; }
+
+  local commit label
+  if [[ "$DEPLOY_REF" =~ ^[0-9a-f]{7,40}$ ]]; then
+    commit="$DEPLOY_REF"
+    label="${RELEASE_LABEL:-$DEPLOY_REF}"
+  else
+    step "Looking up ${DEPLOY_REF:-the newest stable release} on the ops PC"
+    local resolved
+    resolved="$(resolve_release_commit "$DEPLOY_REF")" || {
+      err "Pass the commit instead (Nova.ps1 deploy prints it):  sudo $0 deploy <commit>"; exit 1; }
+    label="${resolved%% *}"
+    commit="${resolved##* }"
+  fi
+
+  # git runs as the checkout's owner: objects fetched as root would leave
+  # root-owned files that break the next ordinary `git pull`.
+  local owner; owner="$(stat -c %U "$dir")"
+  g() { sudo -u "$owner" git -C "$@"; }
+
+  if [[ -n "$(g "$dir" status --porcelain --untracked-files=no)" ]]; then
+    err "$dir has local changes to tracked files. Settings belong in $ENV_FILE;"
+    err "stash or discard these (git -C $dir stash), then deploy again:"
+    g "$dir" status --porcelain --untracked-files=no | sed 's/^/      /' >&2
+    exit 1
+  fi
+
+  step "Deploying novaGround $label (${commit:0:7}) to $dir"
+  if ! g "$dir" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+    g "$dir" fetch origin >/dev/null 2>&1 || warn "fetch from origin failed (offline?)"
+  fi
+  if ! g "$dir" cat-file -e "${commit}^{commit}" 2>/dev/null && [[ -d "$DEV_DIR" ]]; then
+    # Offline: the release was tested from the dev checkout, so it has it.
+    g "$dir" fetch "$DEV_DIR" '+refs/heads/*:refs/remotes/nova-dev/*' '+HEAD:refs/remotes/nova-dev/HEAD' >/dev/null 2>&1
+  fi
+  g "$dir" cat-file -e "${commit}^{commit}" 2>/dev/null || {
+    err "Commit $commit is not available from origin or from $DEV_DIR."; exit 1; }
+
+  systemctl stop "$SERVICE_NAME" 2>/dev/null && ok "stopped the service"
+  g "$dir" checkout -q --detach "$commit" || { err "checkout failed"; exit 1; }
+  ok "checked out $(g "$dir" log -1 --format='%h %s')"
+
+  ENVIRONMENT="prod" do_build
+
+  if [[ -f "${dir}/novaGround.service" ]]; then
+    install -m 644 "${dir}/novaGround.service" "$UNIT_PATH"
+    systemctl daemon-reload
+  fi
+
+  mkdir -p "$ENV_DIR"
+  printf 'release=%s\ncommit=%s\ndeployed=%s\n' "$label" "$(g "$dir" rev-parse HEAD)" "$(date -Iseconds)" > "$DEPLOYED_FILE"
+
+  systemctl start "$SERVICE_NAME" && ok "service started"
+  ok "Prod is running novaGround $label."
+}
+
 do_doctor() {
   echo
   step "novaGround prerequisites"
@@ -309,6 +409,7 @@ case "$ACTION" in
   status)    do_status ;;
   logs)      do_logs ;;
   update)    do_update ;;
+  deploy)    do_deploy ;;
   doctor)    do_doctor ;;
   ""|-h|--help) usage ;;
   *) err "Unknown action: $ACTION"; usage; exit 1 ;;
