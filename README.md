@@ -21,10 +21,11 @@ src/
 └── utils/
 docs/setup.md         install, build, run and configure in detail
 install.sh            one-time Pi setup
-nova-pi.sh            install, build, start/stop, status, logs, deploy, doctor
+nova-pi.sh            install, use prod|dev, build, status, logs, deploy, doctor, report
 start.sh              service entry point (systemd runs this)
 run.sh                interactive tmux session, for bench work
-novaGround.service    the systemd unit
+novaGround@.service   the systemd unit: novaGround@prod and novaGround@dev
+nova-pi-report.*      timer that reports this Pi's state to the Nova Console
 ```
 
 ## Getting started
@@ -48,19 +49,21 @@ meson compile -C build
 sudo ./nova-pi.sh status                     # the installed service
 ```
 
-Targets, options and the service settings in `/etc/nova/novaGround.env`:
+Targets, options, and where the services get their settings:
 [docs/setup.md](docs/setup.md).
 
 ### Troubleshoot
 
 ```bash
 sudo ./nova-pi.sh doctor
-journalctl -u novaGround -f
+journalctl -u novaGround@prod -f            # or novaGround@dev
 ```
 
 | Symptom | Fix |
 |---|---|
-| Service restarts in a loop with "Unknown option" | `NOVA_FAS_PORT` is set in `/etc/nova/novaGround.env`. Empty it ([details](docs/setup.md#run)) |
+| Data files never reach the backend | `./nova-pi.sh status` shows each environment's backend and whether it answers; look for `UPLOAD FAILED` in the log. `.\ops\Nova.ps1 use <env>` on the ops PC rewrites the settings |
+| `novaGround@<env>` stops with "is running" or "bench session" | Only one of prod, dev and `run.sh` can run. Switch with `sudo ./nova-pi.sh use <env>`, or stop the bench session with `./run.sh --kill` |
+| `nova-pi.sh` says the Pi has the old `novaGround.service` | Migrate it: `sudo ./nova-pi.sh install` ([details](docs/setup.md#moving-a-pi-off-the-old-single-service)) |
 | A DAQ HAT isn't found | Check the address jumpers, then `sudo daqhats_read_eeproms` |
 | Telemetry flickers in the UI | `run.sh` and the service are both running. Stop one |
 | Build fails on Debian Trixie | The daqhats library needs Raspberry Pi OS (Legacy, 64-bit) |
