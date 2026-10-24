@@ -51,7 +51,7 @@ if [ "$install_deps" == "y" ]; then
                    libbz2-dev libz-dev libicu-dev git
 
     echo "Installing libraries..."
-    apt install -y libpaho-mqtt-dev libgpiod-dev libcurl4-openssl-dev
+    apt install -y libpaho-mqtt-dev libpaho-mqttpp-dev libgpiod-dev libcurl4-openssl-dev
 
     echo "Installing utilities..."
     # avahi-daemon publishes this Pi as <hostname>.local, so the ops PC can
@@ -96,8 +96,7 @@ if [ "$install_deps" == "y" ]; then
         sudo -u "$RUN_USER" git clone https://github.com/WiringPi/WiringPi.git
         cd WiringPi
         sudo -u "$RUN_USER" ./build debian
-        mv debian-template/wiringpi_3.18_arm64.deb .
-        apt install -y ./wiringpi_3.18_arm64.deb
+        apt install -y ./debian-template/wiringpi_*_arm64.deb
     else
         echo "WiringPi already installed - skipping."
     fi

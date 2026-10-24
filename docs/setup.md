@@ -36,7 +36,7 @@ Only needed on a machine where `install.sh` can't run.
 
    ```bash
    sudo apt install build-essential clang meson ninja-build
-   sudo apt install libpaho-mqtt-dev libgpiod-dev libcurl4-openssl-dev
+   sudo apt install libpaho-mqtt-dev libpaho-mqttpp-dev libgpiod-dev libcurl4-openssl-dev
    ```
 
 2. MCC daqhats ([their docs](https://mccdaq.github.io/daqhats/install.html#installation)):
@@ -68,8 +68,7 @@ Only needed on a machine where `install.sh` can't run.
    ```bash
    git clone https://github.com/WiringPi/WiringPi.git && cd WiringPi
    ./build debian
-   mv debian-template/wiringpi_3.18_arm64.deb .
-   sudo apt install ./wiringpi_3.18_arm64.deb
+   sudo apt install ./debian-template/wiringpi_*_arm64.deb
    ```
 
 ## Build
