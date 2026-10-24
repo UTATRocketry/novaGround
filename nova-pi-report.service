@@ -1,0 +1,19 @@
+# Sends this Pi's state (which novaGround instance is running, its commit,
+# its backend and whether that backend answers, the last upload) to the Nova
+# Console on the ops PC. Started every 15 s by nova-pi-report.timer.
+#
+# Installed by ./nova-pi.sh install. Runs the copy of nova-pi.sh in
+# /usr/local/lib/nova, which install and deploy refresh, so reporting keeps
+# working whichever release the prod checkout is on.
+
+[Unit]
+Description=Report novaGround state to the Nova Console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=admin
+Group=admin
+ExecStart=/usr/local/lib/nova/nova-pi.sh report
+SyslogIdentifier=nova-pi-report

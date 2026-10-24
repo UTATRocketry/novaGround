@@ -1,0 +1,65 @@
+# novaGround systemd template - one instance per environment:
+#
+#   novaGround@prod   runs /home/admin/prod/novaGround   enabled, starts on boot
+#   novaGround@dev    runs /home/admin/dev/novaGround    never enabled; started
+#                                                        by `nova-pi.sh use dev`
+#                                                        or `Nova.ps1 use dev`
+#
+# Installed to /etc/systemd/system/ by ./nova-pi.sh install (and refreshed by
+# deploy). Don't edit it on the Pi; change it here so the change is versioned.
+#
+# Settings come from two files, split by who owns them:
+#   /etc/nova/pi.env               which Pi this is and which binary it runs
+#                                  (written once by nova-pi.sh install)
+#   /etc/nova/novaGround-%i.env    broker, backend and console for this
+#                                  environment (written by Nova.ps1 on the ops PC)
+# Both are required: a missing file stops the unit instead of falling back to
+# a guessed address (issue #29).
+
+[Unit]
+Description=novaGround telemetry and control daemon (%i)
+Documentation=https://github.com/UTATRocketry/novaGround
+# network-online, not network: novaGround dials out to the MQTT broker on the
+# ops PC immediately at startup. Plain network.target fires before the ethernet
+# link has an address, so the first connection attempt fails on every boot.
+After=network-online.target
+Wants=network-online.target
+# Don't give up after the default 5 attempts: a ground station left running
+# unattended should keep retrying rather than stay dead until someone notices.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+
+WorkingDirectory=/home/admin/%i/novaGround
+
+Environment=NOVA_ENV=%i
+Environment=NOVA_STATE_DIR=/var/lib/nova/%i
+EnvironmentFile=/etc/nova/pi.env
+EnvironmentFile=/etc/nova/novaGround-%i.env
+# Creates /var/lib/nova/%i owned by admin. novaGround writes last_upload.json
+# there, and nova-pi.sh reports it to the Nova Console.
+StateDirectory=nova/%i
+
+# systemd needs an absolute path. start.sh builds the argument list from the
+# environment above.
+ExecStart=/home/admin/%i/novaGround/start.sh
+
+Restart=always
+RestartSec=5
+# start.sh exits 78 when it must not run (the other environment is running, or
+# settings are missing). Restarting would only repeat the same error.
+RestartPreventExitStatus=78
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=novaGround-%i
+
+# The DAQ HAT and GPIO access need the real device nodes; no sandboxing that
+# would hide /dev from the process.
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
