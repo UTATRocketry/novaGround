@@ -127,6 +127,11 @@ http_ok() {
 
 report_now() { systemctl start --no-block "$REPORT_SERVICE" >/dev/null 2>&1 || true; }
 
+# git writes scripts with the mode it stores. Releases before
+# bugfix/script-exec-bit stored them without the executable bit, so put it
+# back after anything that checks files out.
+make_executable() { chmod +x "$1"/*.sh 2>/dev/null || true; }
+
 assert_checkout() {
   if [[ "$HERE" == "$TOOL_DIR" ]]; then
     err "Run $ACTION from a novaGround checkout (e.g. $DEV_DIR/nova-pi.sh), not from $TOOL."
@@ -259,7 +264,8 @@ setup_units() {
   install -m 644 "${HERE}/${REPORT_SERVICE}" "${UNIT_DIR}/${REPORT_SERVICE}"
   install -m 644 "${HERE}/${REPORT_TIMER}" "${UNIT_DIR}/${REPORT_TIMER}"
   install -m 755 "${HERE}/nova-pi.sh" "$TOOL"
-  chmod +x "${PROD_DIR}/start.sh" "${PROD_DIR}/run.sh" "${DEV_DIR}/start.sh" "${DEV_DIR}/run.sh" 2>/dev/null || true
+  make_executable "$PROD_DIR"
+  make_executable "$DEV_DIR"
 
   systemctl daemon-reload
   # Prod comes back on boot; dev never does, exactly like the PC's stacks.
@@ -279,6 +285,14 @@ do_build() {
   step "Building novaGround ($env) in $dir"
   # Older deploys built as root; hand the build folder back to the owner.
   if [[ $EUID -eq 0 && -d "${dir}/build" ]]; then chown -R "$(owner_of "$dir"):" "${dir}/build"; fi
+  # Without root we can't fix that, and the compiler only says
+  # "Operation not permitted" deep inside ninja. Say what to do instead.
+  if [[ $EUID -ne 0 && -d "${dir}/build" ]] && \
+     [[ -n "$(find "${dir}/build" ! -user "$(id -un)" -print -quit 2>/dev/null)" ]]; then
+    err "${dir}/build has files owned by another user (an older build ran as root)."
+    err "Build with sudo once; it hands build/ back to $(owner_of "$dir"):  sudo $0 build --env $env"
+    exit 1
+  fi
   if [[ ! -d "${dir}/build" ]]; then
     step "Setting up the meson build directory"
     as_owner "$dir" bash -c 'cd "$1" && CC=clang CXX=clang++ meson setup build' _ "$dir" \
@@ -637,6 +651,7 @@ do_update() {
     err "git pull failed (not a fast-forward?). Resolve by hand and re-run."
     exit 1
   }
+  make_executable "$dir"
   do_build "$env"
 
   if systemctl is-active --quiet "$(unit "$env")"; then
@@ -721,6 +736,9 @@ do_deploy() {
   ok "stopped novaGround"
   g "$dir" checkout -q --detach "$commit" || { err "checkout failed"; exit 1; }
   ok "checked out $(g "$dir" log -1 --format='%h %s')"
+  # The checkout rewrites changed scripts with git's mode, which older
+  # releases stored without the executable bit.
+  make_executable "$dir"
 
   do_build prod
 

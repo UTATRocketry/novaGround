@@ -44,8 +44,9 @@ EnvironmentFile=/etc/nova/novaGround-%i.env
 StateDirectory=nova/%i
 
 # systemd needs an absolute path. start.sh builds the argument list from the
-# environment above.
-ExecStart=/home/admin/%i/novaGround/start.sh
+# environment above. It runs through bash so the unit still works when git has
+# written start.sh without its executable bit (a checkout of an older release).
+ExecStart=/bin/bash /home/admin/%i/novaGround/start.sh
 
 Restart=always
 RestartSec=5
