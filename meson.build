@@ -1,14 +1,44 @@
 project('Nova Ground', 'cpp', version: '0.0.1', default_options : ['cpp_std=c++20'])
 add_global_arguments(language: 'cpp')
 
-# MCC Daq libraries
+# `-Dhardware=false` builds only the hardware-free code (nova_core) and its
+# tests, so CI and laptops don't need wiringPi, libgpiod, paho or the MCC HAT
+# libraries. The Pi builds with the default (true).
+hardware = get_option('hardware')
+
 cpp = meson.get_compiler('cpp')
 # clang = cpp.find_clang()
-daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 boost_dep = dependency('boost', modules : ['thread','json'])
-    pahomqttc_lib1 = cpp.find_library('paho-mqttpp3', required: true)
-    pahomqttc_lib2 = cpp.find_library('paho-mqtt3as', required: true)
-    libpaho = declare_dependency(dependencies: [pahomqttc_lib1, pahomqttc_lib2])
+threads_dep = dependency('threads')
+
+#### Grab source files
+src = []
+core_src = []
+
+include = []
+include += include_directories('src')
+
+subdir('src')
+
+# Hardware-free code: core/ and utils/ need only Boost and the standard library.
+nova_core = static_library(
+    'nova_core',
+    sources: core_src,
+    dependencies: [boost_dep, threads_dep],
+    include_directories: include,
+)
+
+subdir('tests')
+
+if not hardware
+    subdir_done()
+endif
+
+# MCC Daq libraries
+daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
+pahomqttc_lib1 = cpp.find_library('paho-mqttpp3', required: true)
+pahomqttc_lib2 = cpp.find_library('paho-mqtt3as', required: true)
+libpaho = declare_dependency(dependencies: [pahomqttc_lib1, pahomqttc_lib2])
 
 # WiringPi library
 wiringpi_dep = cpp.find_library('wiringPi', required: true)
@@ -18,15 +48,6 @@ gpiod_dep = dependency('libgpiod', version: '>=1.6', required: true)
 
 # libcurl library (optional)
 curl_dep = dependency('libcurl', required: false)
-
-#### Grab source files
-src = []
-
-include = []
-include += include_directories('src')
-
-subdir('src')
-
 
 #### TODO: Set the clang-tidy and clang-format paths as env variables
 clangtidy = find_program('clang-tidy', '/usr/local/Cellar/llvm/17.0.6_1/bin/clang-tidy', required: false)

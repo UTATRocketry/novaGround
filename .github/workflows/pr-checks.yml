@@ -86,3 +86,36 @@ jobs:
         run: |
           bad=$(grep -l $'\r' *.sh *.service 2>/dev/null || true)
           if [[ -n "$bad" ]]; then echo "::error::CRLF line endings (they break on the Pi): $bad"; exit 1; fi
+
+  # The hardware-free code (src/core, src/utils) built with -Dhardware=false
+  # and tested with Boost.Test, in the Pi's OS (Debian Bookworm) on amd64 and
+  # on native arm64, plain and under the sanitizers.
+  core-tests:
+    name: core tests (${{ matrix.arch }}, ${{ matrix.sanitizer }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    container: debian:bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        sanitizer: [none, 'address,undefined', thread]
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates g++ meson ninja-build pkg-config \
+            libboost1.81-dev libboost-json1.81-dev libboost-thread1.81-dev libboost-test1.81-dev
+
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: meson setup build-test -Dhardware=false -Db_sanitize=${{ matrix.sanitizer }} -Db_lundef=false && meson compile -C build-test
+
+      - name: Test
+        run: meson test -C build-test --print-errorlogs
