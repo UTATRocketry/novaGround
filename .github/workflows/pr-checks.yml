@@ -82,6 +82,12 @@ jobs:
           for f in *.sh; do bash -n "$f" || status=1; done
           exit $status
 
+      - name: shellcheck
+        run: shellcheck --severity=warning *.sh tests/*.sh
+
+      - name: Scripts only pass flags the binary accepts
+        run: bash tests/scripts_contract.sh "$PWD"
+
       - name: Scripts and units use LF line endings
         run: |
           bad=$(grep -l $'\r' *.sh *.service 2>/dev/null || true)

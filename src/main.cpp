@@ -23,6 +23,7 @@
 #include "interfaces/io_expander.hpp"
 #include "interfaces/mcc_daqhats.hpp"
 #include "interfaces/servo.hpp"
+#include "utils/cli.hpp"
 
 using namespace std::chrono;
 
@@ -49,119 +50,26 @@ namespace {
 const std::string kCommandTopic = "nova/command";
 const std::string kCommandSourceId = "novaOps";
 const int kI2CAddr = 0x20;
-
-struct RuntimeConfig {
-    std::string node_id = NOVA_BUILD_ID;
-    std::string broker = NOVA_DEFAULT_BROKER;
-    std::string backend = NOVA_DEFAULT_BACKEND;
-    int verbosity = NOVA_DEFAULT_VERBOSITY;
-    int sample_interval_ms = NOVA_DEFAULT_SAMPLE_MS;
-    int publish_interval_ms = NOVA_DEFAULT_PUBLISH_MS;
-};
-
-bool parse_int(const std::string& text, int& value) {
-    try {
-        size_t idx = 0;
-        int parsed = std::stoi(text, &idx);
-        if (idx != text.size()) {
-            return false;
-        }
-        value = parsed;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-std::string normalize_broker_address(std::string broker) {
-    if (broker.find("://") == std::string::npos) {
-        if (broker.find(':') == std::string::npos) {
-            broker += ":1883";
-        }
-        broker = "mqtt://" + broker;
-    }
-    return broker;
-}
-
-std::string normalize_backend_base(std::string backend) {
-    if (backend.find("://") == std::string::npos) {
-        if (backend.find(':') == std::string::npos) {
-            backend += ":8000";
-        }
-        backend = "http://" + backend;
-    }
-    if (!backend.empty() && backend.back() == '/') {
-        backend.pop_back();
-    }
-    return backend;
-}
-
-std::string build_upload_url(const std::string& backend_base) {
-    const std::string suffix = "/api/data-files/upload";
-    if (backend_base.find(suffix) != std::string::npos) {
-        return backend_base;
-    }
-    return backend_base + suffix;
-}
-
-void print_usage(const char* exe_name) {
-    std::cout << "Usage: " << exe_name << " [options]\n"
-              << "  --broker <host[:port]|mqtt://...>   MQTT broker address\n"
-              << "  --backend <host[:port]|http://...>  Backend base URL\n"
-              << "  --verbosity <0|1|2>                 0=quiet,1=info,2=debug\n"
-              << "  --sample-ms <ms>                    DAQ sampling interval\n"
-              << "  --publish-ms <ms>                   Telemetry publish interval\n"
-              << "  --help                              Show this message\n";
-}
 }
 
 int main(int argc, char* argv[]) {
-    RuntimeConfig config;
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--help" || arg == "-h") {
-            print_usage(argv[0]);
-            return 0;
-        }
-        if (arg == "--broker" && i + 1 < argc) {
-            config.broker = argv[++i];
-            continue;
-        }
-        if (arg == "--backend" && i + 1 < argc) {
-            config.backend = argv[++i];
-            continue;
-        }
-        if (arg == "--verbosity" && i + 1 < argc) {
-            int value = 0;
-            if (!parse_int(argv[++i], value)) {
-                std::cerr << "Invalid verbosity value.\n";
-                return 1;
-            }
-            config.verbosity = value;
-            continue;
-        }
-        if (arg == "--sample-ms" && i + 1 < argc) {
-            int value = 0;
-            if (!parse_int(argv[++i], value)) {
-                std::cerr << "Invalid sample interval value.\n";
-                return 1;
-            }
-            config.sample_interval_ms = value;
-            continue;
-        }
-        if (arg == "--publish-ms" && i + 1 < argc) {
-            int value = 0;
-            if (!parse_int(argv[++i], value)) {
-                std::cerr << "Invalid publish interval value.\n";
-                return 1;
-            }
-            config.publish_interval_ms = value;
-            continue;
-        }
-        std::cerr << "Unknown option: " << arg << "\n";
-        print_usage(argv[0]);
+    RuntimeConfig defaults;
+    defaults.node_id = NOVA_BUILD_ID;
+    defaults.broker = NOVA_DEFAULT_BROKER;
+    defaults.backend = NOVA_DEFAULT_BACKEND;
+    defaults.verbosity = NOVA_DEFAULT_VERBOSITY;
+    defaults.sample_interval_ms = NOVA_DEFAULT_SAMPLE_MS;
+    defaults.publish_interval_ms = NOVA_DEFAULT_PUBLISH_MS;
+
+    ParseResult parsed = parse_args(std::vector<std::string>(argv + 1, argv + argc),
+                                    defaults, argv[0], std::cout, std::cerr);
+    if (parsed.status == ParseStatus::ExitOk) {
+        return 0;
+    }
+    if (parsed.status == ParseStatus::ExitError) {
         return 1;
     }
+    const RuntimeConfig& config = parsed.config;
 
     if (config.verbosity <= 0) {
         std::cout.setstate(std::ios::failbit);

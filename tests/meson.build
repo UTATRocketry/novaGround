@@ -4,6 +4,7 @@ nova_core_tests = executable(
     'nova_core_tests',
     files(
         'test_main.cpp',
+        'test_cli.cpp',
         'test_json_utils.cpp',
         'test_command_router.cpp',
         'test_telemetry.cpp',
@@ -17,3 +18,10 @@ nova_core_tests = executable(
 )
 
 test('nova_core', nova_core_tests)
+
+# Every flag the shell scripts pass to the binary must be one it accepts.
+test(
+    'scripts_contract',
+    find_program('bash'),
+    args: [files('scripts_contract.sh'), meson.project_source_root()],
+)
