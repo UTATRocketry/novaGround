@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "actuators.hpp"
 #include "controllers/data_file_controller.hpp"
 #include "controllers/gpio_controller.hpp"
 #include "controllers/loops.hpp"
@@ -21,11 +22,7 @@
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
-#include "drivers/linux_gpio.hpp"
-#include "drivers/io_expander.hpp"
-#include "drivers/linux_i2c_bus.hpp"
 #include "drivers/mcc_daqhats.hpp"
-#include "drivers/servo.hpp"
 #include "utils/cli.hpp"
 
 using namespace std::chrono;
@@ -52,7 +49,6 @@ using namespace std::chrono;
 namespace {
 const std::string kCommandTopic = "nova/command";
 const std::string kCommandSourceId = "novaOps";
-const int kI2CAddr = 0x20;
 const int kGpioSampleIntervalMs = 50;
 }
 
@@ -105,26 +101,8 @@ int main(int argc, char* argv[]) {
     std::vector<unsigned int> input_pins = {5, 6};
 
     MccDaqHats daq;
-    std::vector<DaqHatDevice> daq_hats;
-    bool has_daq = false;
-
-#ifndef NOVA_MOCK_MODE
-    try {
-        daq_hats = daq.discover();
-        std::vector<DaqHatDevice> opened_hats;
-        for (const auto& hat : daq_hats) {
-            if (daq.open(hat)) {
-                opened_hats.push_back(hat);
-            }
-        }
-        daq_hats = std::move(opened_hats);
-        has_daq = !daq_hats.empty();
-    } catch (const std::exception& e) {
-        std::cerr << "DAQ initialization failed: " << e.what() << std::endl;
-    }
-#else
-    std::cout << "Mock mode enabled: skipping DAQ initialization." << std::endl;
-#endif
+    std::vector<DaqHatDevice> daq_hats = discover_and_open(daq);
+    const bool has_daq = !daq_hats.empty();
 
     std::vector<std::string> sensor_headers = build_sensor_headers(daq_hats);
 
@@ -149,76 +127,14 @@ int main(int argc, char* argv[]) {
 
     DataLogger data_logger("data", sensor_headers, actuator_headers, gpio_pins_for_logging, node_id);
 
-    std::unique_ptr<LinuxI2cBus> servo_bus;
-    std::unique_ptr<Adafruit_PWMServoDriver> servo_driver;
-    bool has_servo = false;
-    std::unique_ptr<LinuxI2cBus> relay_bus;
-    std::unique_ptr<TCA9535> io_expander;
-    bool has_io_expander = false;
-    std::bitset<16> relay_state;
-    std::unique_ptr<LinuxGpio> gpio;
-    bool has_gpio = false;
+    Actuators actuators = build_actuators(data_logger, output_pins, input_pins);
 
-#ifndef NOVA_MOCK_MODE
-    servo_bus = std::make_unique<LinuxI2cBus>("/dev/i2c-1", LinuxI2cBus::Transfer::Smbus);
-    servo_driver = std::make_unique<Adafruit_PWMServoDriver>(*servo_bus);
-    has_servo = servo_driver->begin();
-    if (has_servo) {
-        servo_driver->setPWMFreq(50);
+    ServoController servo_controller(actuators.servo.get(), &telemetry, &data_logger);
+    RelayController relay_controller(actuators.relays.get(), &telemetry, &data_logger);
+    if (actuators.relays) {
+        relay_controller.set_initial_state(actuators.relay_state);
     }
-
-    relay_bus = std::make_unique<LinuxI2cBus>("/dev/i2c-1");
-    io_expander = std::make_unique<TCA9535>(*relay_bus, kI2CAddr);
-    has_io_expander = io_expander->is_ready();
-    if (has_io_expander) {
-        bool ok = io_expander->configure_port(0, 0x00) &&
-                  io_expander->configure_port(1, 0x00);
-        for (int i = 0; i < 16; i++) {
-            relay_state.set(i, true);
-        }
-        ok = ok && io_expander->write_output(relay_state);
-        if (!ok) {
-            std::cerr << "IO expander setup failed; disabling relay control." << std::endl;
-            has_io_expander = false;
-        }
-    } else {
-        std::cerr << "IO expander not available." << std::endl;
-    }
-
-    data_logger.update_relay_state(relay_state);
-
-    try {
-        gpio = std::make_unique<LinuxGpio>("/dev/gpiochip0");
-        has_gpio = true;
-
-        for (auto pin : output_pins) {
-            gpio->set_direction(pin, "out");
-            gpio->write(pin, 0);
-            data_logger.update_gpio(static_cast<int>(pin), 0);
-        }
-
-        for (auto pin : input_pins) {
-            gpio->set_direction(pin, "in");
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "GPIO Manager initialization failed: " << e.what() << std::endl;
-        has_gpio = false;
-    }
-#else
-    std::cout << "Mock mode enabled: skipping GPIO/relay/servo initialization." << std::endl;
-#endif
-
-    ServoController servo_controller(has_servo ? servo_driver.get() : nullptr,
-                                     &telemetry,
-                                     &data_logger);
-    RelayController relay_controller(has_io_expander ? io_expander.get() : nullptr,
-                                     &telemetry,
-                                     &data_logger);
-    if (has_io_expander) {
-        relay_controller.set_initial_state(relay_state);
-    }
-    GpioController gpio_controller(has_gpio ? gpio.get() : nullptr,
-                                   &data_logger);
+    GpioController gpio_controller(actuators.gpio.get(), &data_logger);
     DataFileController data_file_controller(&data_logger, upload_url);
 
     CommandRouter router(kCommandSourceId);
@@ -294,9 +210,9 @@ int main(int argc, char* argv[]) {
                              config.sample_interval_ms);
     }
 
-    if (has_gpio) {
+    if (actuators.gpio) {
         threads.emplace_back(gpio_sample_loop,
-                             std::ref(static_cast<DigitalIo&>(*gpio)),
+                             std::ref(*actuators.gpio),
                              std::ref(telemetry),
                              kGpioSampleIntervalMs);
     }

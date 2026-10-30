@@ -86,7 +86,7 @@ This builds three executables from the same code:
 |---|---|---|---|
 | `novaGround` | 1 ms | 50 ms | The main GSS Pi |
 | `novaThermo` | 100 ms | 250 ms | The thermocouple Pi (MCC 134) |
-| `novaMock` | 100 ms | 250 ms | No hardware initialisation: development and simulator tests |
+| `novaMock` | 100 ms | 250 ms | The full program on simulated hardware (see [simulation.md](simulation.md)): development and simulator tests |
 
 ## Run
 

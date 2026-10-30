@@ -17,10 +17,15 @@ nova_core_tests = executable(
         'test_gpio_controller.cpp',
         'test_sampler.cpp',
         'test_stoppable_loops.cpp',
+        'test_waveform.cpp',
+        'test_scenario.cpp',
+        'test_daqhats_sim.cpp',
+        'test_sim_actuators.cpp',
+        '../src/actuators_sim.cpp',
     ),
-    link_with: nova_core,
+    link_with: sim_libs,
     dependencies: [boost_test_dep, boost_dep, threads_dep],
-    include_directories: include,
+    include_directories: [sim_include] + include,
     cpp_args: ['-DBOOST_TEST_DYN_LINK'],
 )
 

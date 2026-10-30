@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,8 +21,15 @@ public:
     std::set<std::pair<int, int>> failing;
     std::vector<std::pair<int, int>> reads;
 
-    std::vector<DaqHatDevice> discover() override { return {}; }
-    bool open(const DaqHatDevice&) override { return true; }
+    std::vector<DaqHatDevice> hats_found;
+    std::set<int> unopenable;  // addresses whose open fails
+    bool throw_on_discover = false;
+
+    std::vector<DaqHatDevice> discover() override {
+        if (throw_on_discover) throw std::runtime_error("Error listing DAQ hats");
+        return hats_found;
+    }
+    bool open(const DaqHatDevice& hat) override { return !unopenable.count(hat.address); }
     bool read(const DaqHatDevice& hat, int channel, double& value) override {
         reads.push_back({hat.address, channel});
         if (failing.count({hat.address, channel})) return false;
@@ -147,6 +155,22 @@ BOOST_AUTO_TEST_CASE(rows_are_logged_only_while_recording_and_in_header_order) {
     BOOST_TEST(l[0] == "timestamp,hat0_ch0,hat0_ch1,hat1_ch0");
     BOOST_TEST(l[1].substr(l[1].find(',')) == ",1,2,3");
     BOOST_TEST(l[2].substr(l[2].find(',')) == ",1,NaN,3");
+}
+
+BOOST_AUTO_TEST_CASE(discover_and_open_keeps_only_the_hats_that_opened) {
+    daq.hats_found = {hat(0, {0}), hat(1, {0}), hat(2, {0})};
+    daq.unopenable = {1};
+    auto opened = discover_and_open(daq);
+    BOOST_REQUIRE_EQUAL(opened.size(), 2u);
+    BOOST_TEST(opened[0].address == 0);
+    BOOST_TEST(opened[1].address == 2);
+}
+
+BOOST_AUTO_TEST_CASE(discover_and_open_with_no_hats_or_a_failing_bus_gives_an_empty_list) {
+    BOOST_TEST(discover_and_open(daq).empty());
+    daq.hats_found = {hat(0, {0})};
+    daq.throw_on_discover = true;
+    BOOST_TEST(discover_and_open(daq).empty());
 }
 
 BOOST_AUTO_TEST_CASE(gpio_sampling_stores_the_input_pins_only) {
