@@ -88,6 +88,14 @@ jobs:
       - name: Scripts only pass flags the binary accepts
         run: bash tests/scripts_contract.sh "$PWD"
 
+      # nova-pi.sh, start.sh and run.sh against stubbed systemctl/tmux/sudo,
+      # in a scratch NOVA_PI_ROOT. Nothing real is started or written.
+      - name: bats (scripts)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats
+          bats tests/bats
+
       - name: Scripts and units use LF line endings
         run: |
           bad=$(grep -l $'\r' *.sh *.service 2>/dev/null || true)

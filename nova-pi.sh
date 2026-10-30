@@ -33,23 +33,27 @@
 # ============================================================================
 set -uo pipefail
 
-PROD_DIR="/home/admin/prod/novaGround"
-DEV_DIR="/home/admin/dev/novaGround"
-UNIT_DIR="/etc/systemd/system"
+# Tests set NOVA_PI_ROOT to a scratch directory so every path below lands in it
+# and nothing on the real Pi is touched. On a Pi it is empty.
+ROOT="${NOVA_PI_ROOT:-}"
+
+PROD_DIR="${ROOT}/home/admin/prod/novaGround"
+DEV_DIR="${ROOT}/home/admin/dev/novaGround"
+UNIT_DIR="${ROOT}/etc/systemd/system"
 TEMPLATE_UNIT="${UNIT_DIR}/novaGround@.service"
 REPORT_SERVICE="nova-pi-report.service"
 REPORT_TIMER="nova-pi-report.timer"
 # The single unit and env file used before novaGround@prod / @dev.
 LEGACY_UNIT="${UNIT_DIR}/novaGround.service"
-ENV_DIR="/etc/nova"
+ENV_DIR="${ROOT}/etc/nova"
 LEGACY_ENV="${ENV_DIR}/novaGround.env"
 # Which Pi this is and which binary it runs. Owned by this Pi.
 PI_ENV="${ENV_DIR}/pi.env"
 # What prod is running, written by `deploy`.
 DEPLOYED_FILE="${ENV_DIR}/deployed"
-STATE_ROOT="/var/lib/nova"
+STATE_ROOT="${ROOT}/var/lib/nova"
 # A copy of this script that outlives any checkout, run by the report timer.
-TOOL_DIR="/usr/local/lib/nova"
+TOOL_DIR="${ROOT}/usr/local/lib/nova"
 TOOL="${TOOL_DIR}/nova-pi.sh"
 REPORT_VERSION=1
 TARGETS="novaGround novaThermo novaMock"
@@ -65,6 +69,8 @@ err()  { echo "${RED}    $*${RESET}" >&2; }
 usage() { sed -n '3,/^# =\{10\}/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
 need_root() {
+  # A test root can't harm the Pi: its paths are scratch and its commands are stubs.
+  if [[ -n "$ROOT" ]]; then return; fi
   if [[ $EUID -ne 0 ]]; then
     err "This action needs root. Re-run with sudo:  sudo $0 $ACTION"
     exit 1
