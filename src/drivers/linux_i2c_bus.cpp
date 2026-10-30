@@ -2,12 +2,26 @@
 
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
+#include <linux/i2c.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
 #include <iostream>
 
-LinuxI2cBus::LinuxI2cBus(const char* device) {
+namespace {
+// One SMBus byte-data transaction, the same ioctl wiringPi's
+// wiringPiI2CReadReg8/WriteReg8 make.
+int smbus_byte_data(int fd, char read_write, uint8_t reg, i2c_smbus_data* data) {
+    i2c_smbus_ioctl_data args;
+    args.read_write = read_write;
+    args.command = reg;
+    args.size = I2C_SMBUS_BYTE_DATA;
+    args.data = data;
+    return ioctl(fd, I2C_SMBUS, &args);
+}
+}
+
+LinuxI2cBus::LinuxI2cBus(const char* device, Transfer transfer) : transfer_(transfer) {
     fd_ = open(device, O_RDWR);
     if (fd_ < 0) {
         set_error("Failed to open I2C bus");
@@ -49,6 +63,15 @@ bool LinuxI2cBus::write_reg8(uint8_t address, uint8_t reg, uint8_t value) {
     if (!attach(address)) {
         return false;
     }
+    if (transfer_ == Transfer::Smbus) {
+        i2c_smbus_data data;
+        data.byte = value;
+        if (smbus_byte_data(fd_, I2C_SMBUS_WRITE, reg, &data) < 0) {
+            set_error("Failed to write I2C register");
+            return false;
+        }
+        return true;
+    }
     uint8_t buffer[2] = {reg, value};
     if (write(fd_, buffer, 2) != 2) {
         set_error("Failed to write I2C register");
@@ -60,6 +83,15 @@ bool LinuxI2cBus::write_reg8(uint8_t address, uint8_t reg, uint8_t value) {
 bool LinuxI2cBus::read_reg8(uint8_t address, uint8_t reg, uint8_t& value) {
     if (!attach(address)) {
         return false;
+    }
+    if (transfer_ == Transfer::Smbus) {
+        i2c_smbus_data data;
+        if (smbus_byte_data(fd_, I2C_SMBUS_READ, reg, &data) < 0) {
+            set_error("Failed to read from I2C register");
+            return false;
+        }
+        value = data.byte & 0xFF;
+        return true;
     }
     if (write(fd_, &reg, 1) != 1) {
         set_error("Failed to select I2C register");

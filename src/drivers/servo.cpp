@@ -13,16 +13,17 @@
 
 #define ENABLE_DEBUG_OUTPUT // comment out to suppress debug level dumps
 
-Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(const uint8_t addr)
-    : _i2caddr(addr) {}
+Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(I2cBus& bus, const uint8_t addr)
+    : bus_(bus), _i2caddr(addr) {}
 
 bool Adafruit_PWMServoDriver::begin(uint8_t prescale) {
-    fd = wiringPiI2CSetup(_i2caddr);
-    if (fd < 0) {
+    begun_ = false;
+    if (!bus_.is_ready() || !bus_.attach(_i2caddr)) {
         std::cerr << "Failed to initialize I2C communication." << std::endl;
         return false;
     }
 
+    begun_ = true;
     std::cout << "I2C communication initialized successfully." << std::endl;
     reset();
     if (prescale) {
@@ -35,7 +36,7 @@ bool Adafruit_PWMServoDriver::begin(uint8_t prescale) {
 }
 
 bool Adafruit_PWMServoDriver::is_ready() const {
-    return fd >= 0;
+    return begun_ && bus_.is_ready();
 }
 
 void Adafruit_PWMServoDriver::reset() {
@@ -257,21 +258,21 @@ void Adafruit_PWMServoDriver::setOscillatorFrequency(uint32_t freq) {
 }
 
 uint8_t Adafruit_PWMServoDriver::read8(uint8_t addr) {
-    if (fd < 0) {
+    if (!begun_) {
         return 0;
     }
-    int value = wiringPiI2CReadReg8(fd, addr);
-    if (value < 0) {
+    uint8_t value = 0;
+    if (!bus_.read_reg8(_i2caddr, addr, value)) {
         return 0;
     }
-    return static_cast<uint8_t>(value);
+    return value;
 }
 
 void Adafruit_PWMServoDriver::write8(uint8_t addr, uint8_t d) {
-    if (fd < 0) {
+    if (!begun_) {
         return;
     }
-    wiringPiI2CWriteReg8(fd, addr, d);
+    bus_.write_reg8(_i2caddr, addr, d);
 }
 
 void Adafruit_PWMServoDriver::delay(int ms) {

@@ -40,7 +40,9 @@ pahomqttc_lib1 = cpp.find_library('paho-mqttpp3', required: true)
 pahomqttc_lib2 = cpp.find_library('paho-mqtt3as', required: true)
 libpaho = declare_dependency(dependencies: [pahomqttc_lib1, pahomqttc_lib2])
 
-# WiringPi library
+# WiringPi library. The servo driver no longer uses it (it goes through
+# LinuxI2cBus); the dependency stays until during or after the virtual-device
+# work so that change can be reversed.
 wiringpi_dep = cpp.find_library('wiringPi', required: true)
 
 # libgpiod library

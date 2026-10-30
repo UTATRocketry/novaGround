@@ -8,7 +8,7 @@ namespace {
 const int kServoDefaultMicros = 1500;
 }
 
-ServoController::ServoController(Adafruit_PWMServoDriver* driver, TelemetryStore* telemetry, DataLogger* logger)
+ServoController::ServoController(PwmDriver* driver, TelemetryStore* telemetry, DataLogger* logger)
     : driver_(driver), telemetry_(telemetry), logger_(logger) {}
 
 bool ServoController::available() const {

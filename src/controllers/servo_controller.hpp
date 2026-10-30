@@ -7,11 +7,11 @@
 
 #include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
-#include "drivers/servo.hpp"
+#include "interfaces/pwm_driver.hpp"
 
 class ServoController {
 public:
-    ServoController(Adafruit_PWMServoDriver* driver, TelemetryStore* telemetry, DataLogger* logger);
+    ServoController(PwmDriver* driver, TelemetryStore* telemetry, DataLogger* logger);
 
     void handle_command(const boost::json::object& cmd);
 
@@ -24,7 +24,7 @@ private:
 
     bool available() const;
 
-    Adafruit_PWMServoDriver* driver_ = nullptr;
+    PwmDriver* driver_ = nullptr;
     TelemetryStore* telemetry_ = nullptr;
     DataLogger* logger_ = nullptr;
     std::unordered_map<int, ServoState> states_;

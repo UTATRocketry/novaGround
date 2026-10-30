@@ -145,9 +145,10 @@ int main(int argc, char* argv[]) {
 
     DataLogger data_logger("data", sensor_headers, actuator_headers, gpio_pins_for_logging, node_id);
 
-    Adafruit_PWMServoDriver servo_driver;
+    std::unique_ptr<LinuxI2cBus> servo_bus;
+    std::unique_ptr<Adafruit_PWMServoDriver> servo_driver;
     bool has_servo = false;
-    std::unique_ptr<LinuxI2cBus> i2c_bus;
+    std::unique_ptr<LinuxI2cBus> relay_bus;
     std::unique_ptr<TCA9535> io_expander;
     bool has_io_expander = false;
     std::bitset<16> relay_state;
@@ -155,13 +156,15 @@ int main(int argc, char* argv[]) {
     bool has_gpio = false;
 
 #ifndef NOVA_MOCK_MODE
-    has_servo = servo_driver.begin();
+    servo_bus = std::make_unique<LinuxI2cBus>("/dev/i2c-1", LinuxI2cBus::Transfer::Smbus);
+    servo_driver = std::make_unique<Adafruit_PWMServoDriver>(*servo_bus);
+    has_servo = servo_driver->begin();
     if (has_servo) {
-        servo_driver.setPWMFreq(50);
+        servo_driver->setPWMFreq(50);
     }
 
-    i2c_bus = std::make_unique<LinuxI2cBus>("/dev/i2c-1");
-    io_expander = std::make_unique<TCA9535>(*i2c_bus, kI2CAddr);
+    relay_bus = std::make_unique<LinuxI2cBus>("/dev/i2c-1");
+    io_expander = std::make_unique<TCA9535>(*relay_bus, kI2CAddr);
     has_io_expander = io_expander->is_ready();
     if (has_io_expander) {
         bool ok = io_expander->configure_port(0, 0x00) &&
@@ -201,7 +204,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Mock mode enabled: skipping GPIO/relay/servo initialization." << std::endl;
 #endif
 
-    ServoController servo_controller(has_servo ? &servo_driver : nullptr,
+    ServoController servo_controller(has_servo ? servo_driver.get() : nullptr,
                                      &telemetry,
                                      &data_logger);
     RelayController relay_controller(has_io_expander ? io_expander.get() : nullptr,

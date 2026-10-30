@@ -13,7 +13,9 @@
 #include <iostream>
 #include <stdexcept>
 #include <unistd.h>
-#include <wiringPiI2C.h>
+
+#include "interfaces/i2c_bus.hpp"
+#include "interfaces/pwm_driver.hpp"
 
 // REGISTER ADDRESSES
 #define PCA9685_MODE1 0x00      /**< Mode Register 1 */
@@ -63,11 +65,13 @@
  *  @brief  Class that stores state and functions for interacting with PCA9685
  * PWM chip
  */
-class Adafruit_PWMServoDriver {
+class Adafruit_PWMServoDriver : public PwmDriver {
   public:
-    explicit Adafruit_PWMServoDriver(uint8_t addr = PCA9685_I2C_ADDRESS);
+    // The bus must outlive this object. Its transfers should be SMBus byte-data
+    // (LinuxI2cBus::Transfer::Smbus), which is what this driver used before.
+    explicit Adafruit_PWMServoDriver(I2cBus& bus, uint8_t addr = PCA9685_I2C_ADDRESS);
     bool begin(uint8_t prescale = 0);
-    bool is_ready() const;
+    bool is_ready() const override;
 
     void reset();
     void sleep();
@@ -79,15 +83,16 @@ class Adafruit_PWMServoDriver {
     void setPWM(uint8_t num, uint16_t on, uint16_t off);
     void setPin(uint8_t num, uint16_t val, bool invert = false);
     uint8_t readPrescale();
-    void writeMicroseconds(uint8_t num, uint16_t Microseconds);
-    bool disablePWM(uint8_t num);
+    void writeMicroseconds(uint8_t num, uint16_t Microseconds) override;
+    bool disablePWM(uint8_t num) override;
 
     void setOscillatorFrequency(uint32_t freq);
     uint32_t getOscillatorFrequency();
 
   private:
-    int fd = -1;
+    I2cBus& bus_;
     uint8_t _i2caddr = 0;
+    bool begun_ = false;
     uint32_t _oscillator_freq = FREQUENCY_OSCILLATOR;
     bool warned_not_ready_ = false;
 
