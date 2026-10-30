@@ -6,6 +6,8 @@
 #include <string>
 #include <thread>
 
+#include "utils/interruptible_sleep.hpp"
+
 namespace json = boost::json;
 using namespace std::chrono;
 
@@ -13,12 +15,14 @@ namespace {
 const std::string kTelemetryTopic = "nova/telemetry/engine";
 }
 
-void publisher_loop(mqtt::async_client_ptr cli,
+void publisher_loop(std::stop_token stop,
+                    mqtt::async_client_ptr cli,
                     TelemetryStore& telemetry,
                     std::string source_id,
                     int publish_interval_ms) {
     int interval_ms = publish_interval_ms > 0 ? publish_interval_ms : 1;
-    while (true) {
+    InterruptibleSleep sleeper;
+    while (!stop.stop_requested()) {
         try {
             json::array json_sensor_data;
             json::array json_gpio_data;
@@ -59,16 +63,24 @@ void publisher_loop(mqtt::async_client_ptr cli,
             std::cerr << "Publisher error: unknown exception" << std::endl;
         }
 
-        std::this_thread::sleep_for(milliseconds(interval_ms));
+        if (sleeper.sleep_for(stop, milliseconds(interval_ms))) {
+            break;
+        }
     }
 }
 
-void consumer_loop(mqtt::async_client_ptr cli, CommandRouter& router) {
-    while (true) {
+void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, CommandRouter& router) {
+    InterruptibleSleep sleeper;
+    while (!stop.stop_requested()) {
         try {
-            auto msg = cli ? cli->consume_message() : nullptr;
-            if (!msg) {
-                std::this_thread::sleep_for(milliseconds(1));
+            if (!cli) {
+                sleeper.sleep_for(stop, milliseconds(1));
+                continue;
+            }
+            // Wake up regularly so a stop request is noticed even when no
+            // message arrives.
+            mqtt::const_message_ptr msg;
+            if (!cli->try_consume_message_for(&msg, milliseconds(100)) || !msg) {
                 continue;
             }
 

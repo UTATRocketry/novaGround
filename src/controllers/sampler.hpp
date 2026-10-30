@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -22,8 +23,10 @@ void daq_sample_once(AnalogIo& daq,
                      TelemetryStore& store,
                      DataLogger* logger);
 
-// daq_sample_once every sample_interval_ms, forever.
-void daq_sample_loop(AnalogIo& daq,
+// daq_sample_once every sample_interval_ms until a stop is requested. As the
+// first parameter the token is passed automatically by std::jthread.
+void daq_sample_loop(std::stop_token stop,
+                     AnalogIo& daq,
                      const std::vector<DaqHatDevice>& daq_hats,
                      TelemetryStore& store,
                      DataLogger* logger,
@@ -33,6 +36,6 @@ void daq_sample_loop(AnalogIo& daq,
 // exception from the hardware is logged and swallowed, so the loop survives.
 void gpio_sample_once(DigitalIo& gpio, TelemetryStore& store);
 
-// gpio_sample_once every interval_ms, forever. (No default for the interval:
-// std::thread cannot use default arguments.)
-void gpio_sample_loop(DigitalIo& gpio, TelemetryStore& store, int interval_ms);
+// gpio_sample_once every interval_ms until a stop is requested. (No default
+// for the interval: std::jthread cannot use default arguments.)
+void gpio_sample_loop(std::stop_token stop, DigitalIo& gpio, TelemetryStore& store, int interval_ms);

@@ -5,6 +5,8 @@
 #include <limits>
 #include <thread>
 
+#include "utils/interruptible_sleep.hpp"
+
 std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& hats) {
     std::vector<std::string> headers;
     headers.push_back("timestamp");
@@ -60,15 +62,19 @@ void daq_sample_once(AnalogIo& daq,
     }
 }
 
-void daq_sample_loop(AnalogIo& daq,
+void daq_sample_loop(std::stop_token stop,
+                     AnalogIo& daq,
                      const std::vector<DaqHatDevice>& daq_hats,
                      TelemetryStore& store,
                      DataLogger* logger,
                      int sample_interval_ms) {
     int interval_ms = sample_interval_ms > 0 ? sample_interval_ms : 1;
-    while (true) {
+    InterruptibleSleep sleeper;
+    while (!stop.stop_requested()) {
         daq_sample_once(daq, daq_hats, store, logger);
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        if (sleeper.sleep_for(stop, std::chrono::milliseconds(interval_ms))) {
+            break;
+        }
     }
 }
 
@@ -83,9 +89,12 @@ void gpio_sample_once(DigitalIo& gpio, TelemetryStore& store) {
     }
 }
 
-void gpio_sample_loop(DigitalIo& gpio, TelemetryStore& store, int interval_ms) {
-    while (true) {
+void gpio_sample_loop(std::stop_token stop, DigitalIo& gpio, TelemetryStore& store, int interval_ms) {
+    InterruptibleSleep sleeper;
+    while (!stop.stop_requested()) {
         gpio_sample_once(gpio, store);
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        if (sleeper.sleep_for(stop, std::chrono::milliseconds(interval_ms))) {
+            break;
+        }
     }
 }

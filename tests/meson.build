@@ -16,6 +16,7 @@ nova_core_tests = executable(
         'test_servo_controller.cpp',
         'test_gpio_controller.cpp',
         'test_sampler.cpp',
+        'test_stoppable_loops.cpp',
     ),
     link_with: nova_core,
     dependencies: [boost_test_dep, boost_dep, threads_dep],
@@ -23,7 +24,7 @@ nova_core_tests = executable(
     cpp_args: ['-DBOOST_TEST_DYN_LINK'],
 )
 
-test('nova_core', nova_core_tests)
+test('nova_core', nova_core_tests, timeout: 120)
 
 # Every flag the shell scripts pass to the binary must be one it accepts.
 test(

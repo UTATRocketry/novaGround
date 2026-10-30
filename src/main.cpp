@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <stop_token>
 #include <thread>
 #include <vector>
 
@@ -274,31 +275,33 @@ int main(int argc, char* argv[]) {
         std::cerr << "MQTT connection unavailable; continuing without broker." << std::endl;
     }
 
-    std::thread publisher(publisher_loop,
-                          cli,
-                          std::ref(telemetry),
-                          node_id,
-                          config.publish_interval_ms);
-    publisher.detach();
+    // The jthreads are asked to stop, and joined, if main ever returns. Nothing
+    // requests a stop yet: main still runs until the process is killed.
+    std::vector<std::jthread> threads;
+
+    threads.emplace_back(publisher_loop,
+                         cli,
+                         std::ref(telemetry),
+                         node_id,
+                         config.publish_interval_ms);
 
     if (has_daq) {
-        std::thread sampler(daq_sample_loop,
-                            std::ref(static_cast<AnalogIo&>(daq)),
-                            daq_hats,
-                            std::ref(telemetry),
-                            &data_logger,
-                            config.sample_interval_ms);
-        sampler.detach();
+        threads.emplace_back(daq_sample_loop,
+                             std::ref(static_cast<AnalogIo&>(daq)),
+                             daq_hats,
+                             std::ref(telemetry),
+                             &data_logger,
+                             config.sample_interval_ms);
     }
 
     if (has_gpio) {
-        std::thread gpio_sampler(gpio_sample_loop, std::ref(static_cast<DigitalIo&>(*gpio)), std::ref(telemetry),
-                                 kGpioSampleIntervalMs);
-        gpio_sampler.detach();
+        threads.emplace_back(gpio_sample_loop,
+                             std::ref(static_cast<DigitalIo&>(*gpio)),
+                             std::ref(telemetry),
+                             kGpioSampleIntervalMs);
     }
 
-    std::thread consumer(consumer_loop, cli, std::ref(router));
-    consumer.detach();
+    threads.emplace_back(consumer_loop, cli, std::ref(router));
 
     while (true) {
         std::this_thread::sleep_for(seconds(1));
