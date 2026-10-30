@@ -6,7 +6,7 @@
 #include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
 #include "fake_i2c_bus.hpp"
-#include "interfaces/io_expander.hpp"
+#include "drivers/io_expander.hpp"
 #include "temp_dir.hpp"
 
 namespace json = boost::json;

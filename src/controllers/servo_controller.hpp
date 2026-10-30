@@ -7,7 +7,7 @@
 
 #include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
-#include "interfaces/servo.hpp"
+#include "drivers/servo.hpp"
 
 class ServoController {
 public:

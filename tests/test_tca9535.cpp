@@ -3,7 +3,7 @@
 #include <chrono>
 
 #include "fake_i2c_bus.hpp"
-#include "interfaces/io_expander.hpp"
+#include "drivers/io_expander.hpp"
 
 namespace {
 constexpr uint8_t kAddr = 0x20;

@@ -8,13 +8,13 @@
 #include <string>
 #include <vector>
 
-class GPIO_Manager {
+class LinuxGpio {
     // This class is a wrapper for GPIO operations using the gpiod library.
     // It provides methods to set pin direction, read and write pin values,
     // and manage multiple GPIO pins in a thread-safe manner.
 public:
-    GPIO_Manager(const std::string& chipname = "/dev/gpiochip0");
-    ~GPIO_Manager();
+    LinuxGpio(const std::string& chipname = "/dev/gpiochip0");
+    ~LinuxGpio();
 
     bool set_direction(int pin, const std::string& direction);
     bool write(int pin, int value);

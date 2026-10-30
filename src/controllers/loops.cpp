@@ -82,7 +82,7 @@ void consumer_loop(mqtt::async_client_ptr cli, CommandRouter& router) {
     }
 }
 
-void gpio_sampler_loop(GPIO_Manager& manager, TelemetryStore& telemetry) {
+void gpio_sampler_loop(LinuxGpio& manager, TelemetryStore& telemetry) {
     while (true) {
         try {
             auto input_vals = manager.read_all_inputs();

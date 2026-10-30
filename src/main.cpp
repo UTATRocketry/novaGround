@@ -19,11 +19,11 @@
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
 #include "core/telemetry.hpp"
-#include "interfaces/gpio_manager.hpp"
-#include "interfaces/io_expander.hpp"
-#include "interfaces/linux_i2c_bus.hpp"
-#include "interfaces/mcc_daqhats.hpp"
-#include "interfaces/servo.hpp"
+#include "drivers/linux_gpio.hpp"
+#include "drivers/io_expander.hpp"
+#include "drivers/linux_i2c_bus.hpp"
+#include "drivers/mcc_daqhats.hpp"
+#include "drivers/servo.hpp"
 #include "utils/cli.hpp"
 
 using namespace std::chrono;
@@ -151,8 +151,8 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<TCA9535> io_expander;
     bool has_io_expander = false;
     std::bitset<16> relay_state;
-    std::unique_ptr<GPIO_Manager> gpio_manager;
-    bool has_gpio_manager = false;
+    std::unique_ptr<LinuxGpio> gpio;
+    bool has_gpio = false;
 
 #ifndef NOVA_MOCK_MODE
     has_servo = servo_driver.begin();
@@ -181,21 +181,21 @@ int main(int argc, char* argv[]) {
     data_logger.update_relay_state(relay_state);
 
     try {
-        gpio_manager = std::make_unique<GPIO_Manager>("/dev/gpiochip0");
-        has_gpio_manager = true;
+        gpio = std::make_unique<LinuxGpio>("/dev/gpiochip0");
+        has_gpio = true;
 
         for (auto pin : output_pins) {
-            gpio_manager->set_direction(pin, "out");
-            gpio_manager->write(pin, 0);
+            gpio->set_direction(pin, "out");
+            gpio->write(pin, 0);
             data_logger.update_gpio(static_cast<int>(pin), 0);
         }
 
         for (auto pin : input_pins) {
-            gpio_manager->set_direction(pin, "in");
+            gpio->set_direction(pin, "in");
         }
     } catch (const std::exception& e) {
         std::cerr << "GPIO Manager initialization failed: " << e.what() << std::endl;
-        has_gpio_manager = false;
+        has_gpio = false;
     }
 #else
     std::cout << "Mock mode enabled: skipping GPIO/relay/servo initialization." << std::endl;
@@ -210,7 +210,7 @@ int main(int argc, char* argv[]) {
     if (has_io_expander) {
         relay_controller.set_initial_state(relay_state);
     }
-    GpioController gpio_controller(has_gpio_manager ? gpio_manager.get() : nullptr,
+    GpioController gpio_controller(has_gpio ? gpio.get() : nullptr,
                                    &data_logger);
     DataFileController data_file_controller(&data_logger, upload_url);
 
@@ -284,8 +284,8 @@ int main(int argc, char* argv[]) {
         sampler.detach();
     }
 
-    if (has_gpio_manager) {
-        std::thread gpio_sampler(gpio_sampler_loop, std::ref(*gpio_manager), std::ref(telemetry));
+    if (has_gpio) {
+        std::thread gpio_sampler(gpio_sampler_loop, std::ref(*gpio), std::ref(telemetry));
         gpio_sampler.detach();
     }
 

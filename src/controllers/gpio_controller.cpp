@@ -4,7 +4,7 @@
 
 #include "utils/json_utils.hpp"
 
-GpioController::GpioController(GPIO_Manager* manager, DataLogger* logger)
+GpioController::GpioController(LinuxGpio* manager, DataLogger* logger)
     : manager_(manager), logger_(logger) {}
 
 bool GpioController::available() const {
