@@ -4,11 +4,11 @@
 
 #include "utils/json_utils.hpp"
 
-GpioController::GpioController(LinuxGpio* manager, DataLogger* logger)
-    : manager_(manager), logger_(logger) {}
+GpioController::GpioController(DigitalIo* gpio, DataLogger* logger)
+    : gpio_(gpio), logger_(logger) {}
 
 bool GpioController::available() const {
-    return manager_ != nullptr;
+    return gpio_ != nullptr;
 }
 
 void GpioController::handle_command(const boost::json::object& cmd) {
@@ -27,16 +27,16 @@ void GpioController::handle_command(const boost::json::object& cmd) {
     if (auto mode_opt = get_string(cmd, "mode")) {
         std::string mode = to_lower(*mode_opt);
         if (mode == "input") {
-            manager_->set_direction(pin, "in");
+            gpio_->set_direction(pin, "in");
         } else if (mode == "output") {
-            manager_->set_direction(pin, "out");
+            gpio_->set_direction(pin, "out");
         } else {
             std::cerr << "Invalid GPIO mode: " << mode << std::endl;
         }
     }
 
     if (auto state_opt = get_bool(cmd, "state")) {
-        manager_->write(pin, *state_opt ? 1 : 0);
+        gpio_->write(pin, *state_opt ? 1 : 0);
         if (logger_) {
             logger_->update_gpio(pin, *state_opt ? 1 : 0);
         }

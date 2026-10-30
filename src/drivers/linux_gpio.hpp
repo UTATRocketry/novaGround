@@ -8,19 +8,21 @@
 #include <string>
 #include <vector>
 
-class LinuxGpio {
+#include "interfaces/digital_io.hpp"
+
+class LinuxGpio : public DigitalIo {
     // This class is a wrapper for GPIO operations using the gpiod library.
     // It provides methods to set pin direction, read and write pin values,
     // and manage multiple GPIO pins in a thread-safe manner.
 public:
     LinuxGpio(const std::string& chipname = "/dev/gpiochip0");
-    ~LinuxGpio();
+    ~LinuxGpio() override;
 
-    bool set_direction(int pin, const std::string& direction);
-    bool write(int pin, int value);
-    bool read(int pin, int& value);
-    std::vector<int> get_input_pins();
-    std::map<int, int> read_all_inputs();
+    bool set_direction(int pin, const std::string& direction) override;
+    bool write(int pin, int value) override;
+    bool read(int pin, int& value) override;
+    std::vector<int> get_input_pins() override;
+    std::map<int, int> read_all_inputs() override;
 
 private:
     struct PinInfo {

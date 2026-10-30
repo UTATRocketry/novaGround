@@ -3,17 +3,17 @@
 #include <boost/json.hpp>
 
 #include "core/data_logger.hpp"
-#include "drivers/linux_gpio.hpp"
+#include "interfaces/digital_io.hpp"
 
 class GpioController {
 public:
-    GpioController(LinuxGpio* manager, DataLogger* logger);
+    GpioController(DigitalIo* gpio, DataLogger* logger);
 
     void handle_command(const boost::json::object& cmd);
 
 private:
     bool available() const;
 
-    LinuxGpio* manager_ = nullptr;
+    DigitalIo* gpio_ = nullptr;
     DataLogger* logger_ = nullptr;
 };
