@@ -14,6 +14,7 @@
 #include "controllers/data_file_controller.hpp"
 #include "controllers/gpio_controller.hpp"
 #include "controllers/loops.hpp"
+#include "controllers/sampler.hpp"
 #include "controllers/relay_controller.hpp"
 #include "controllers/servo_controller.hpp"
 #include "core/command_router.hpp"
@@ -51,6 +52,7 @@ namespace {
 const std::string kCommandTopic = "nova/command";
 const std::string kCommandSourceId = "novaOps";
 const int kI2CAddr = 0x20;
+const int kGpioSampleIntervalMs = 50;
 }
 
 int main(int argc, char* argv[]) {
@@ -101,15 +103,16 @@ int main(int argc, char* argv[]) {
     std::vector<unsigned int> output_pins = {17, 27, 22};
     std::vector<unsigned int> input_pins = {5, 6};
 
+    MccDaqHats daq;
     std::vector<DaqHatDevice> daq_hats;
     bool has_daq = false;
 
 #ifndef NOVA_MOCK_MODE
     try {
-        daq_hats = initialize_daqs();
+        daq_hats = daq.discover();
         std::vector<DaqHatDevice> opened_hats;
         for (const auto& hat : daq_hats) {
-            if (open_daq_hat(hat)) {
+            if (daq.open(hat)) {
                 opened_hats.push_back(hat);
             }
         }
@@ -279,7 +282,8 @@ int main(int argc, char* argv[]) {
     publisher.detach();
 
     if (has_daq) {
-        std::thread sampler(sample_func,
+        std::thread sampler(daq_sample_loop,
+                            std::ref(static_cast<AnalogIo&>(daq)),
                             daq_hats,
                             std::ref(telemetry),
                             &data_logger,
@@ -288,7 +292,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (has_gpio) {
-        std::thread gpio_sampler(gpio_sampler_loop, std::ref(*gpio), std::ref(telemetry));
+        std::thread gpio_sampler(gpio_sample_loop, std::ref(static_cast<DigitalIo&>(*gpio)), std::ref(telemetry),
+                                 kGpioSampleIntervalMs);
         gpio_sampler.detach();
     }
 

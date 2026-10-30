@@ -1,24 +1,13 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
-#include "core/telemetry.hpp"
-#include "core/data_logger.hpp"
+#include "interfaces/analog_io.hpp"
 
-struct DaqHatDevice {
-    int address = 0;
-    int hat_id = 0;
-    std::vector<int> channels;
+// MCC 128 (analog) and MCC 134 (thermocouple) HATs through libdaqhats.
+class MccDaqHats : public AnalogIo {
+public:
+    std::vector<DaqHatDevice> discover() override;
+    bool open(const DaqHatDevice& hat) override;
+    bool read(const DaqHatDevice& hat, int channel, double& value) override;
 };
-
-std::vector<DaqHatDevice> initialize_daqs();
-bool open_daq_hat(const DaqHatDevice& hat);
-bool get_daq_value(const DaqHatDevice& hat, int channel, double& value);
-std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& hats);
-
-// Data sampling loop
-void sample_func(const std::vector<DaqHatDevice>& daq_hats,
-                 TelemetryStore& store,
-                 DataLogger* logger,
-                 int sample_interval_ms);

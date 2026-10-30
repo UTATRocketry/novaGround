@@ -14,6 +14,8 @@ nova_core_tests = executable(
         'test_relay_controller.cpp',
         'test_pca9685.cpp',
         'test_servo_controller.cpp',
+        'test_gpio_controller.cpp',
+        'test_sampler.cpp',
     ),
     link_with: nova_core,
     dependencies: [boost_test_dep, boost_dep, threads_dep],

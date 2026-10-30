@@ -81,17 +81,3 @@ void consumer_loop(mqtt::async_client_ptr cli, CommandRouter& router) {
         }
     }
 }
-
-void gpio_sampler_loop(LinuxGpio& manager, TelemetryStore& telemetry) {
-    while (true) {
-        try {
-            auto input_vals = manager.read_all_inputs();
-            telemetry.set_gpio_states(std::move(input_vals));
-        } catch (const std::exception& e) {
-            std::cerr << "GPIO sampler error: " << e.what() << std::endl;
-        } catch (...) {
-            std::cerr << "GPIO sampler error: unknown exception" << std::endl;
-        }
-        std::this_thread::sleep_for(milliseconds(50));
-    }
-}
