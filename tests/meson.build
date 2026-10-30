@@ -10,6 +10,8 @@ nova_core_tests = executable(
         'test_telemetry.cpp',
         'test_data_logger.cpp',
         'test_data_file.cpp',
+        'test_tca9535.cpp',
+        'test_relay_controller.cpp',
     ),
     link_with: nova_core,
     dependencies: [boost_test_dep, boost_dep, threads_dep],

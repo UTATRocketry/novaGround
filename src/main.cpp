@@ -21,6 +21,7 @@
 #include "core/telemetry.hpp"
 #include "interfaces/gpio_manager.hpp"
 #include "interfaces/io_expander.hpp"
+#include "interfaces/linux_i2c_bus.hpp"
 #include "interfaces/mcc_daqhats.hpp"
 #include "interfaces/servo.hpp"
 #include "utils/cli.hpp"
@@ -146,6 +147,7 @@ int main(int argc, char* argv[]) {
 
     Adafruit_PWMServoDriver servo_driver;
     bool has_servo = false;
+    std::unique_ptr<LinuxI2cBus> i2c_bus;
     std::unique_ptr<TCA9535> io_expander;
     bool has_io_expander = false;
     std::bitset<16> relay_state;
@@ -158,7 +160,8 @@ int main(int argc, char* argv[]) {
         servo_driver.setPWMFreq(50);
     }
 
-    io_expander = std::make_unique<TCA9535>("/dev/i2c-1", kI2CAddr);
+    i2c_bus = std::make_unique<LinuxI2cBus>("/dev/i2c-1");
+    io_expander = std::make_unique<TCA9535>(*i2c_bus, kI2CAddr);
     has_io_expander = io_expander->is_ready();
     if (has_io_expander) {
         bool ok = io_expander->configure_port(0, 0x00) &&
