@@ -12,10 +12,6 @@
 // Samplers: poll hardware and write the result into the TelemetryStore. Each
 // has a *_once function (one pass, testable) and a *_loop that repeats it.
 
-// Find the HATs on the bus and open each; returns the ones that opened. A
-// failure to list the bus is logged and gives an empty list.
-std::vector<DaqHatDevice> discover_and_open(AnalogIo& daq);
-
 // "timestamp", then hat<address>_ch<channel> for every channel of every HAT
 // that has channels. Matches the order daq_sample_once logs values in.
 std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& hats);

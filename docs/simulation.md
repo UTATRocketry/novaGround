@@ -12,6 +12,11 @@ Pi; only the bottom layer is replaced:
 | Servos (PCA9685) | `LinuxI2cBus`, SMBus | `SimPwmDriver` (in memory) |
 | GPIO | libgpiod | `SimDigitalIo` (in memory) |
 
+`main()` asks `build_hardware()` (declared in `src/interfaces/hardware.hpp`) for
+a `Hardware`: the DAQ, the opened HATs, the servo, the relays and the GPIO. Which
+machine that is gets decided when building: `novaGround` and `novaThermo` link
+`src/drivers/hardware_real.cpp`, `novaMock` links `src/sim/hardware_sim.cpp`.
+
 It starts the same way (`./build/novaMock --broker localhost`) and needs only
 paho and Boost to build, so it builds on a laptop or in CI.
 

@@ -21,3 +21,7 @@ public:
     virtual bool open(const DaqHatDevice& hat) = 0;
     virtual bool read(const DaqHatDevice& hat, int channel, double& value) = 0;
 };
+
+// Find the HATs on the bus and open each; returns the ones that opened. A
+// failure to list the bus is logged and gives an empty list.
+std::vector<DaqHatDevice> discover_and_open(AnalogIo& daq);
