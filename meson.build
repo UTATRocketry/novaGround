@@ -65,7 +65,7 @@ common_cpp_args = [
 ]
 
 if curl_dep.found()
-    add_project_arguments('-DHAVE_LIBCURL', language: 'cpp')
+    common_cpp_args += '-DHAVE_LIBCURL'
 endif
 
 # novaMock: the real application on simulated hardware. Needs only paho, so it
