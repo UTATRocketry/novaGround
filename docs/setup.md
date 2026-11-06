@@ -125,7 +125,8 @@ Only one runs at a time. Both run `start.sh`, which reads two files:
 | `/etc/nova/novaGround-<env>.env` | `NOVA_BROKER`, `NOVA_BACKEND`, `NOVA_CONSOLE` for that environment | `Nova.ps1` on the ops PC, from `ops/nova.settings.ps1` |
 
 Optional settings, in either file: `NOVA_STATS=1` turns on the telemetry
-`seq`/timestamp fields and the `nova/stats/<node>` topic; see
+`seq`/timestamp fields and the `nova/stats/<node>` topics, and
+`NOVA_STATS_INTERVAL_MS` sets how often the stats are published; see
 [instrumentation.md](instrumentation.md).
 
 Don't edit the `novaGround-<env>.env` files: `Nova.ps1` rewrites them on every

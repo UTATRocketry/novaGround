@@ -51,7 +51,7 @@ namespace {
 const std::string kCommandTopic = "nova/command";
 const std::string kCommandSourceId = "novaOps";
 const int kGpioSampleIntervalMs = 50;
-const int kStatsIntervalMs = 1000;
+const int kDefaultStatsIntervalMs = 1000;
 
 // Everything the program owns once it is built. Members are destroyed in
 // reverse order, so each one outlives what points at it. Not movable: the
@@ -116,15 +116,27 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
         std::cerr << "NOVA_STATS='" << std::getenv("NOVA_STATS")
                   << "' is not on/off (1/0, true/false, on/off, yes/no); stats are off." << std::endl;
     }
+    // Same rule for the interval: a bad value keeps the default.
+    int stats_interval_ms = kDefaultStatsIntervalMs;
+    if (!parse_stats_interval(std::getenv("NOVA_STATS_INTERVAL_MS"), stats_interval_ms)) {
+        std::cerr << "NOVA_STATS_INTERVAL_MS='" << std::getenv("NOVA_STATS_INTERVAL_MS")
+                  << "' is not a whole number of milliseconds (1 or more); using "
+                  << kDefaultStatsIntervalMs << "." << std::endl;
+    }
     StatsIdentity identity;
     identity.node = config.node_id;
     identity.env = nova_env ? nova_env : "";
     identity.build_id = NOVA_BUILD_ID;
     identity.git_commit = NOVA_GIT_COMMIT;
+    identity.interval_ms = stats_interval_ms;
     app->stats = std::make_unique<StatsRegistry>(std::move(identity), stats_on);
-    std::cout << "Stats: " << (stats_on ? "on (nova/stats/" + config.node_id + ", seq and timestamps in telemetry)"
-                                        : std::string("off"))
-              << std::endl;
+    if (stats_on) {
+        std::cout << "Stats: on, every " << stats_interval_ms << " ms to " << stats_topic(config.node_id)
+                  << " (identity, retained, on " << stats_info_topic(config.node_id)
+                  << "); seq and timestamps in telemetry" << std::endl;
+    } else {
+        std::cout << "Stats: off" << std::endl;
+    }
     std::cout << "Broker: " << broker_address << std::endl;
     std::cout << "Backend: " << backend_base << "  (uploads to " << app->upload_url << ")" << std::endl;
     check_backend(backend_base);
@@ -154,6 +166,16 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
         for (int pin : gpio_pins_for_logging) {
             app->logger->update_gpio(pin, 0);
         }
+    }
+
+    // Register every loop now: the retained info message, published on connect,
+    // lists them with their configured periods. (No-ops when stats are off.)
+    app->stats->loop("publisher", config.publish_interval_ms);
+    if (!hw.daq_hats.empty()) {
+        app->stats->loop("sampler", config.sample_interval_ms);
+    }
+    if (hw.gpio) {
+        app->stats->loop("gpio_sampler", kGpioSampleIntervalMs);
     }
 
     app->servo_controller = std::make_unique<ServoController>(hw.servo.get(), &app->telemetry, app->logger.get());
@@ -194,9 +216,17 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     {
         auto topics = mqtt::string_collection::create({kCommandTopic});
         const std::vector<int> qos{1};
-        cli->set_connected_handler([cli, topics, qos](const std::string& /*cause*/) {
+        StatsRegistry* stats = app->stats.get();
+        const std::string node_id = config.node_id;
+        cli->set_connected_handler([cli, topics, qos, stats, node_id](const std::string& /*cause*/) {
             cli->subscribe(topics, qos);
             std::cout << "Subscribed to " << kCommandTopic << std::endl;
+            // Retained, so the broker keeps it for late subscribers; sent on
+            // every (re)connect in case a broker restart dropped it. Not waited
+            // on: this runs on the client's own callback thread.
+            if (stats->enabled()) {
+                cli->publish(stats_info_topic(node_id), stats->identity_json(), 1, true);
+            }
         });
     }
 
@@ -258,14 +288,14 @@ void run(App& app, std::stop_token stop) {
                              app.stats.get());
     }
 
-    threads.emplace_back(consumer_loop, app.cli, std::ref(*app.router), app.stats.get());
+    threads.emplace_back(consumer_loop, app.cli, std::ref(*app.router));
 
     if (app.stats->enabled()) {
         threads.emplace_back(stats_loop,
                              app.cli,
                              std::ref(*app.stats),
                              app.config.node_id,
-                             kStatsIntervalMs);
+                             app.stats->identity().interval_ms);
     }
 
     InterruptibleSleep sleeper;

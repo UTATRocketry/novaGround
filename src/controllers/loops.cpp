@@ -21,6 +21,10 @@ std::string stats_topic(const std::string& node_id) {
     return "nova/stats/" + node_id;
 }
 
+std::string stats_info_topic(const std::string& node_id) {
+    return stats_topic(node_id) + "/info";
+}
+
 void publisher_loop(std::stop_token stop,
                     mqtt::async_client_ptr cli,
                     TelemetryStore& telemetry,
@@ -93,16 +97,9 @@ void publisher_loop(std::stop_token stop,
     }
 }
 
-void consumer_loop(std::stop_token stop,
-                   mqtt::async_client_ptr cli,
-                   CommandRouter& router,
-                   StatsRegistry* stats) {
-    LoopStats* loop_stats = stats ? stats->loop("consumer", kConsumerPollMs) : nullptr;
+void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, CommandRouter& router) {
     InterruptibleSleep sleeper;
     while (!stop.stop_requested()) {
-        if (loop_stats) {
-            loop_stats->tick();
-        }
         try {
             if (!cli) {
                 sleeper.sleep_for(stop, milliseconds(1));

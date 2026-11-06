@@ -9,15 +9,14 @@ namespace json = boost::json;
 using namespace std::chrono;
 
 namespace {
+constexpr int kSchema = 1;
+
 double to_ms(steady_clock::duration d) {
     return duration<double, std::milli>(d).count();
 }
 
-// Nearest-rank percentile of a sorted, non-empty vector.
-double percentile(const std::vector<double>& sorted, double p) {
-    auto rank = static_cast<std::size_t>(std::ceil(p / 100.0 * static_cast<double>(sorted.size())));
-    rank = std::clamp<std::size_t>(rank, 1, sorted.size());
-    return sorted[rank - 1];
+std::int64_t system_ms() {
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
 json::object summary_json(const Summary& s) {
@@ -28,6 +27,26 @@ json::object summary_json(const Summary& s) {
     o["p99"] = s.p99;
     o["max"] = s.max;
     return o;
+}
+
+json::object report_json(const Distribution::Report& r) {
+    json::object o;
+    o["last"] = summary_json(r.last);
+    o["total"] = summary_json(r.total);
+    return o;
+}
+
+int bucket_of(double value) {
+    if (value <= Histogram::kLowestMs) {
+        return 0;
+    }
+    int index = static_cast<int>(std::floor(std::log2(value / Histogram::kLowestMs) * Histogram::kBucketsPerOctave));
+    return std::clamp(index, 0, Histogram::kBuckets - 1);
+}
+
+// The top of a bucket: the value a percentile read from it reports.
+double bucket_upper(int index) {
+    return Histogram::kLowestMs * std::exp2(static_cast<double>(index + 1) / Histogram::kBucketsPerOctave);
 }
 }  // namespace
 
@@ -49,34 +68,79 @@ bool parse_stats_setting(const char* value, bool& enabled) {
     return false;
 }
 
-Summary summarize(std::vector<double> values) {
+bool parse_stats_interval(const char* value, int& interval_ms) {
+    if (!value || !*value) {
+        return true;
+    }
+    std::string text(value);
+    if (text.size() > 9 ||
+        !std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
+        return false;
+    }
+    int parsed = std::stoi(text);
+    if (parsed < 1) {
+        return false;
+    }
+    interval_ms = parsed;
+    return true;
+}
+
+void Histogram::add(double value) {
+    if (!(value >= 0.0) || std::isinf(value)) {  // NaN, negative, infinite
+        return;
+    }
+    if (count_ == 0) {
+        min_ = max_ = value;
+    } else {
+        min_ = std::min(min_, value);
+        max_ = std::max(max_, value);
+    }
+    ++counts_[bucket_of(value)];
+    ++count_;
+}
+
+Summary Histogram::summarize() const {
     Summary s;
-    s.count = values.size();
-    if (values.empty()) {
+    s.count = count_;
+    if (count_ == 0) {
         return s;
     }
-    std::sort(values.begin(), values.end());
-    s.min = values.front();
-    s.max = values.back();
-    s.p50 = percentile(values, 50.0);
-    s.p99 = percentile(values, 99.0);
+    s.min = min_;
+    s.max = max_;
+
+    // Nearest-rank: the smallest bucket whose running count reaches the rank.
+    auto at = [this](double p) {
+        auto rank = static_cast<std::uint64_t>(std::ceil(p / 100.0 * static_cast<double>(count_)));
+        rank = std::clamp<std::uint64_t>(rank, 1, count_);
+        std::uint64_t seen = 0;
+        for (int i = 0; i < kBuckets; ++i) {
+            seen += counts_[i];
+            if (seen >= rank) {
+                return std::clamp(bucket_upper(i), min_, max_);
+            }
+        }
+        return max_;
+    };
+    s.p50 = at(50.0);
+    s.p99 = at(99.0);
     return s;
 }
 
-void Window::add(double value) {
-    if (values_.size() < kMaxWindow) {
-        values_.push_back(value);
-    } else {
-        ++dropped_;
-    }
+void Histogram::clear() {
+    counts_.fill(0);
+    count_ = 0;
+    min_ = max_ = 0.0;
 }
 
-Summary Window::take() {
-    Summary s = summarize(std::move(values_));
-    s.count += dropped_;
-    values_.clear();
-    dropped_ = 0;
-    return s;
+void Distribution::add(double value) {
+    last_.add(value);
+    total_.add(value);
+}
+
+Distribution::Report Distribution::take() {
+    Report r{last_.summarize(), total_.summarize()};
+    last_.clear();
+    return r;
 }
 
 LoopStats::LoopStats(double configured_ms) : configured_ms_(configured_ms) {}
@@ -87,7 +151,7 @@ void LoopStats::tick(steady_clock::time_point now) {
     if (started_) {
         double period = to_ms(now - last_);
         periods_.add(period);
-        if (period > configured_ms_ * kOverrunFactor) {
+        if (period >= configured_ms_ * kOverrunFactor) {
             ++overruns_;
         }
     }
@@ -106,7 +170,10 @@ LoopStats::Snapshot LoopStats::take() {
 }
 
 StatsRegistry::StatsRegistry(StatsIdentity identity, bool enabled)
-    : identity_(std::move(identity)), enabled_(enabled), started_(steady_clock::now()) {}
+    : identity_(std::move(identity)),
+      enabled_(enabled),
+      started_(steady_clock::now()),
+      started_ms_(system_ms()) {}
 
 std::uint64_t StatsRegistry::next_telemetry_seq() {
     std::lock_guard<std::mutex> lock(seq_mutex_);
@@ -154,27 +221,52 @@ void StatsRegistry::count_daq_read_errors(std::uint64_t n) {
     daq_read_errors_ += n;
 }
 
-std::string StatsRegistry::take_stats_json() {
-    std::lock_guard<std::mutex> lock(mutex_);
-
+std::string StatsRegistry::identity_json() {
     json::object root;
-    root["node"] = identity_.node;
+    root["schema"] = kSchema;
     root["env"] = identity_.env;
     root["build_id"] = identity_.build_id;
     root["git_commit"] = identity_.git_commit;
     root["actuation"] = identity_.actuation;
+    root["started_ms"] = started_ms_;
+    root["stats_interval_ms"] = identity_.interval_ms;
+
+    json::object loops;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [name, stats] : loops_) {
+            json::object o;
+            o["configured_ms"] = stats->configured_ms();
+            loops[name] = std::move(o);
+        }
+    }
+    root["loops"] = std::move(loops);
+
+    // How to read the measurements in the stats message.
+    json::object how;
+    how["overrun_period_factor"] = LoopStats::kOverrunFactor;
+    how["buckets_per_octave"] = Histogram::kBucketsPerOctave;
+    how["lowest_ms"] = Histogram::kLowestMs;
+    how["relative_error"] = Histogram::kRelativeError;
+    root["measurement"] = std::move(how);
+    return json::serialize(root);
+}
+
+std::string StatsRegistry::take_stats_json() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    json::object root;
     root["seq"] = ++stats_seq_;
-    root["time_ms"] = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+    root["time_ms"] = system_ms();
     root["uptime_s"] = duration<double>(steady_clock::now() - started_).count();
 
     json::object loops;
     for (auto& [name, stats] : loops_) {
         LoopStats::Snapshot snap = stats->take();
         json::object o;
-        o["configured_ms"] = snap.configured_ms;
-        o["period_ms"] = summary_json(snap.period_ms);
         o["ticks"] = snap.ticks;
         o["overruns"] = snap.overruns;
+        o["period_ms"] = report_json(snap.period_ms);
         loops[name] = std::move(o);
     }
     root["loops"] = std::move(loops);
@@ -183,8 +275,8 @@ std::string StatsRegistry::take_stats_json() {
     for (auto& [type, c] : commands_) {
         json::object o;
         o["count"] = c.count;
-        o["received_to_handled_ms"] = summary_json(c.to_handled_ms.take());
-        o["received_to_done_ms"] = summary_json(c.to_done_ms.take());
+        o["received_to_handled_ms"] = report_json(c.to_handled_ms.take());
+        o["received_to_done_ms"] = report_json(c.to_done_ms.take());
         commands[type] = std::move(o);
     }
     root["commands"] = std::move(commands);

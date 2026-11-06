@@ -98,10 +98,12 @@ for e in prod dev; do
   fi
 done
 
-# NOVA_STATS (runtime instrumentation) is in the env file but the tmux shell
-# does not inherit it, so pass it on the command line like NOVA_ENV.
+# NOVA_STATS and NOVA_STATS_INTERVAL_MS (runtime instrumentation) are in the env
+# file but the tmux shell does not inherit them, so pass them on the command
+# line like NOVA_ENV.
 STATS_ENV=""
-[[ -n "${NOVA_STATS:-}" ]] && STATS_ENV="NOVA_STATS=$(printf '%q' "$NOVA_STATS") "
+[[ -n "${NOVA_STATS:-}" ]] && STATS_ENV+="NOVA_STATS=$(printf '%q' "$NOVA_STATS") "
+[[ -n "${NOVA_STATS_INTERVAL_MS:-}" ]] && STATS_ENV+="NOVA_STATS_INTERVAL_MS=$(printf '%q' "$NOVA_STATS_INTERVAL_MS") "
 
 CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${STATS_ENV}${BIN} --broker ${BROKER} --backend ${BACKEND} ${NOVA_EXTRA_ARGS:-}"
 
