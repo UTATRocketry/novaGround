@@ -124,7 +124,8 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends git ca-certificates g++ meson ninja-build pkg-config \
-            libboost1.81-dev libboost-json1.81-dev libboost-thread1.81-dev libboost-test1.81-dev
+            libboost1.81-dev libboost-json1.81-dev libboost-thread1.81-dev libboost-test1.81-dev \
+            libpaho-mqtt-dev libpaho-mqttpp-dev libcurl4-openssl-dev mosquitto mosquitto-clients python3
 
       - uses: actions/checkout@v5
 
@@ -132,4 +133,11 @@ jobs:
         run: meson setup build-test -Dhardware=false -Db_sanitize=${{ matrix.sanitizer }} -Db_lundef=false && meson compile -C build-test
 
       - name: Test
+        if: matrix.sanitizer != 'thread'
         run: meson test -C build-test --print-errorlogs
+
+      # paho and mosquitto are not built with ThreadSanitizer, so the novaMock
+      # end-to-end test (suite "integration") runs in the other jobs only.
+      - name: Test (unit tests only)
+        if: matrix.sanitizer == 'thread'
+        run: meson test -C build-test --print-errorlogs --no-suite integration

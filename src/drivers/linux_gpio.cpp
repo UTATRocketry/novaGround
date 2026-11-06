@@ -1,7 +1,7 @@
-#include "gpio_manager.hpp"
+#include "linux_gpio.hpp"
 #include <iostream>
 
-GPIO_Manager::GPIO_Manager(const std::string& chipname) {
+LinuxGpio::LinuxGpio(const std::string& chipname) {
     chip_ = gpiod_chip_open(chipname.c_str());
     if (!chip_) {
         throw std::runtime_error("Failed to open GPIO chip: " + chipname);
@@ -11,7 +11,7 @@ GPIO_Manager::GPIO_Manager(const std::string& chipname) {
     }
 }
 
-GPIO_Manager::~GPIO_Manager() {
+LinuxGpio::~LinuxGpio() {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& [pin, info] : pins_) {
         if (info.line) {
@@ -23,7 +23,7 @@ GPIO_Manager::~GPIO_Manager() {
     }
 }
 
-bool GPIO_Manager::set_direction(int pin, const std::string& direction) {
+bool LinuxGpio::set_direction(int pin, const std::string& direction) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (pins_.count(pin) && pins_[pin].line) {
@@ -57,7 +57,7 @@ bool GPIO_Manager::set_direction(int pin, const std::string& direction) {
     return true;
 }
 
-bool GPIO_Manager::write(int pin, int value) {
+bool LinuxGpio::write(int pin, int value) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!pins_.count(pin) || pins_[pin].direction != "out") {
         std::cerr << "Pin " << pin << " not configured as output\n";
@@ -72,7 +72,7 @@ bool GPIO_Manager::write(int pin, int value) {
     return success;
 }
 
-bool GPIO_Manager::read(int pin, int& value) {
+bool LinuxGpio::read(int pin, int& value) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!pins_.count(pin) || pins_[pin].direction != "in") {
         std::cerr << "Pin " << pin << " not configured as input\n";
@@ -88,7 +88,7 @@ bool GPIO_Manager::read(int pin, int& value) {
     return true;
 }
 
-std::vector<int> GPIO_Manager::get_input_pins() {
+std::vector<int> LinuxGpio::get_input_pins() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> result;
     for (const auto& [pin, info] : pins_) {
@@ -96,7 +96,7 @@ std::vector<int> GPIO_Manager::get_input_pins() {
     }
     return result;
 }
-std::map<int, int> GPIO_Manager::read_all_inputs() {
+std::map<int, int> LinuxGpio::read_all_inputs() {
     std::map<int, int> result;
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& [pin, info] : pins_) {
