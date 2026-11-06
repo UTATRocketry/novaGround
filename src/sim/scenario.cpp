@@ -141,21 +141,41 @@ Scenario default_scenario() {
         return w;
     };
 
+    auto zero = [](double noise) {
+        Waveform w;
+        w.wave = "flat";
+        w.min = -0.5;
+        w.max = 0.5;
+        w.noise = noise;
+        w.value = 0;
+        return w;
+    };
+
     Scenario s;
     SimHat h0;
     h0.address = 0;
     h0.type = "mcc128";
-    h0.channels[0] = sine(0.99, 3.99, 20, 0.02);   // PGSO
-    h0.channels[1] = sine(0.99, 3.99, 20, 0.02);   // PGS
-    h0.channels[4] = sine(1.98, 7.98, 25, 0.02);   // PVO
-    h0.channels[6] = sine(3.59, 5.20, 30, 0.05);   // MOT
-    h0.channels[7] = sine(3.59, 5.20, 30, 0.05);   // MFT
+    h0.channels[0] = zero(0.03);
+    h0.channels[1] = zero(0.03);
+    h0.channels[2] = zero(0.03);
+    h0.channels[3] = zero(0.03);
+    h0.channels[4] = zero(0.03);
+    h0.channels[5] = zero(0.03);
+    h0.channels[6] = zero(0.03);
+    h0.channels[7] = zero(0.03);
     s.hats.push_back(h0);
 
     SimHat h1;
     h1.address = 1;
     h1.type = "mcc128";
-    h1.channels[1] = sine(1.925, 2.06, 18, 0.01);  // CC-LC
+    h1.channels[0] = zero(0.03);
+    h1.channels[1] = zero(0.03);
+    h1.channels[2] = zero(0.03);
+    h1.channels[3] = zero(0.03);
+    h1.channels[4] = zero(0.03);
+    h1.channels[5] = zero(0.03);
+    h1.channels[6] = zero(0.03);
+    h1.channels[7] = zero(0.03);
     s.hats.push_back(h1);
     return s;
 }
