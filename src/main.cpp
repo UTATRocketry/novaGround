@@ -17,6 +17,7 @@
 #include "controllers/servo_controller.hpp"
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
+#include "core/stats.hpp"
 #include "core/telemetry.hpp"
 #include "interfaces/hardware.hpp"
 #include "utils/cli.hpp"
@@ -26,6 +27,9 @@ using namespace std::chrono;
 
 #ifndef NOVA_BUILD_ID
 #define NOVA_BUILD_ID "novaGround"
+#endif
+#ifndef NOVA_GIT_COMMIT
+#define NOVA_GIT_COMMIT "unknown"
 #endif
 #ifndef NOVA_DEFAULT_BROKER
 #define NOVA_DEFAULT_BROKER "localhost:1883"
@@ -47,6 +51,7 @@ namespace {
 const std::string kCommandTopic = "nova/command";
 const std::string kCommandSourceId = "novaOps";
 const int kGpioSampleIntervalMs = 50;
+const int kStatsIntervalMs = 1000;
 
 // Everything the program owns once it is built. Members are destroyed in
 // reverse order, so each one outlives what points at it. Not movable: the
@@ -55,6 +60,8 @@ struct App {
     RuntimeConfig config;
     std::string upload_url;
     TelemetryStore telemetry;
+    // Declared before the controllers and router that report into it.
+    std::unique_ptr<StatsRegistry> stats;
 
     std::vector<unsigned int> output_pins = {17, 27, 22};
     std::vector<unsigned int> input_pins = {5, 6};
@@ -100,6 +107,24 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     const char* nova_env = std::getenv("NOVA_ENV");
     std::cout << "Build ID: " << config.node_id
               << "  environment: " << (nova_env && *nova_env ? nova_env : "(not set)") << std::endl;
+
+    // NOVA_STATS comes from the Pi's env file. A value we cannot read turns
+    // instrumentation off rather than stopping the program: a typo in a
+    // diagnostics setting must never keep the valves from being commanded.
+    bool stats_on = false;
+    if (!parse_stats_setting(std::getenv("NOVA_STATS"), stats_on)) {
+        std::cerr << "NOVA_STATS='" << std::getenv("NOVA_STATS")
+                  << "' is not on/off (1/0, true/false, on/off, yes/no); stats are off." << std::endl;
+    }
+    StatsIdentity identity;
+    identity.node = config.node_id;
+    identity.env = nova_env ? nova_env : "";
+    identity.build_id = NOVA_BUILD_ID;
+    identity.git_commit = NOVA_GIT_COMMIT;
+    app->stats = std::make_unique<StatsRegistry>(std::move(identity), stats_on);
+    std::cout << "Stats: " << (stats_on ? "on (nova/stats/" + config.node_id + ", seq and timestamps in telemetry)"
+                                        : std::string("off"))
+              << std::endl;
     std::cout << "Broker: " << broker_address << std::endl;
     std::cout << "Backend: " << backend_base << "  (uploads to " << app->upload_url << ")" << std::endl;
     check_backend(backend_base);
@@ -140,6 +165,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     app->data_file_controller = std::make_unique<DataFileController>(app->logger.get(), app->upload_url);
 
     app->router = std::make_unique<CommandRouter>(kCommandSourceId);
+    app->router->set_stats(app->stats.get());
     ServoController* servo = app->servo_controller.get();
     RelayController* relay = app->relay_controller.get();
     GpioController* gpio = app->gpio_controller.get();
@@ -211,7 +237,8 @@ void run(App& app, std::stop_token stop) {
                          app.cli,
                          std::ref(app.telemetry),
                          app.config.node_id,
-                         app.config.publish_interval_ms);
+                         app.config.publish_interval_ms,
+                         app.stats.get());
 
     if (!hw.daq_hats.empty()) {
         threads.emplace_back(daq_sample_loop,
@@ -219,17 +246,27 @@ void run(App& app, std::stop_token stop) {
                              hw.daq_hats,
                              std::ref(app.telemetry),
                              app.logger.get(),
-                             app.config.sample_interval_ms);
+                             app.config.sample_interval_ms,
+                             app.stats.get());
     }
 
     if (hw.gpio) {
         threads.emplace_back(gpio_sample_loop,
                              std::ref(*hw.gpio),
                              std::ref(app.telemetry),
-                             kGpioSampleIntervalMs);
+                             kGpioSampleIntervalMs,
+                             app.stats.get());
     }
 
-    threads.emplace_back(consumer_loop, app.cli, std::ref(*app.router));
+    threads.emplace_back(consumer_loop, app.cli, std::ref(*app.router), app.stats.get());
+
+    if (app.stats->enabled()) {
+        threads.emplace_back(stats_loop,
+                             app.cli,
+                             std::ref(*app.stats),
+                             app.config.node_id,
+                             kStatsIntervalMs);
+    }
 
     InterruptibleSleep sleeper;
     while (!sleeper.sleep_for(stop, seconds(1))) {

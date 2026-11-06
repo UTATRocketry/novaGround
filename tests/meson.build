@@ -17,6 +17,7 @@ nova_core_tests = executable(
         'test_gpio_controller.cpp',
         'test_sampler.cpp',
         'test_stoppable_loops.cpp',
+        'test_stats.cpp',
         'test_waveform.cpp',
         'test_scenario.cpp',
         'test_daqhats_sim.cpp',

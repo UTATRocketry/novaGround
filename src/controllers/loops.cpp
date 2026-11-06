@@ -1,6 +1,7 @@
 ﻿#include "loops.hpp"
 
 #include <boost/json.hpp>
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <string>
@@ -13,21 +14,33 @@ using namespace std::chrono;
 
 namespace {
 const std::string kTelemetryTopic = "nova/telemetry/engine";
+const int kConsumerPollMs = 100;
+}
+
+std::string stats_topic(const std::string& node_id) {
+    return "nova/stats/" + node_id;
 }
 
 void publisher_loop(std::stop_token stop,
                     mqtt::async_client_ptr cli,
                     TelemetryStore& telemetry,
                     std::string source_id,
-                    int publish_interval_ms) {
+                    int publish_interval_ms,
+                    StatsRegistry* stats) {
     int interval_ms = publish_interval_ms > 0 ? publish_interval_ms : 1;
+    LoopStats* loop_stats = stats ? stats->loop("publisher", interval_ms) : nullptr;
     InterruptibleSleep sleeper;
     while (!stop.stop_requested()) {
+        if (loop_stats) {
+            loop_stats->tick();
+        }
         try {
             json::array json_sensor_data;
             json::array json_gpio_data;
+            double newest_sample_ms = 0.0;
 
             for (const auto& sd : telemetry.snapshot_sensors()) {
+                newest_sample_ms = std::max(newest_sample_ms, sd.timestamp_ms);
                 json::object se;
                 se["hat_id"] = sd.hat_id;
                 se["channel_id"] = sd.channel_id;
@@ -47,6 +60,14 @@ void publisher_loop(std::stop_token stop,
             payload["source"] = source_id;
             payload["sensors"] = json_sensor_data;
             payload["gpios"] = json_gpio_data;
+            if (loop_stats) {
+                payload["seq"] = stats->next_telemetry_seq();
+                if (newest_sample_ms > 0.0) {
+                    payload["sample_ms"] = newest_sample_ms;
+                }
+                payload["publish_ms"] =
+                    duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+            }
 
             std::string s_payload = json::serialize(payload);
 
@@ -55,6 +76,9 @@ void publisher_loop(std::stop_token stop,
                     cli->publish(kTelemetryTopic, s_payload)->wait();
                 } catch (const std::exception& e) {
                     std::cerr << "Publish failed: " << e.what() << std::endl;
+                    if (stats) {
+                        stats->count_publish_failure();
+                    }
                 }
             }
         } catch (const std::exception& e) {
@@ -69,9 +93,16 @@ void publisher_loop(std::stop_token stop,
     }
 }
 
-void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, CommandRouter& router) {
+void consumer_loop(std::stop_token stop,
+                   mqtt::async_client_ptr cli,
+                   CommandRouter& router,
+                   StatsRegistry* stats) {
+    LoopStats* loop_stats = stats ? stats->loop("consumer", kConsumerPollMs) : nullptr;
     InterruptibleSleep sleeper;
     while (!stop.stop_requested()) {
+        if (loop_stats) {
+            loop_stats->tick();
+        }
         try {
             if (!cli) {
                 sleeper.sleep_for(stop, milliseconds(1));
@@ -80,16 +111,39 @@ void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, CommandRout
             // Wake up regularly so a stop request is noticed even when no
             // message arrives.
             mqtt::const_message_ptr msg;
-            if (!cli->try_consume_message_for(&msg, milliseconds(100)) || !msg) {
+            if (!cli->try_consume_message_for(&msg, milliseconds(kConsumerPollMs)) || !msg) {
                 continue;
             }
 
+            const auto received = steady_clock::now();
             std::string m_str = msg->to_string();
-            router.handle_message(m_str);
+            router.handle_message(m_str, received);
         } catch (const std::exception& e) {
             std::cerr << "Consumer error: " << e.what() << std::endl;
         } catch (...) {
             std::cerr << "Consumer error: unknown exception" << std::endl;
+        }
+    }
+}
+
+void stats_loop(std::stop_token stop,
+                mqtt::async_client_ptr cli,
+                StatsRegistry& stats,
+                std::string node_id,
+                int interval_ms) {
+    const std::string topic = stats_topic(node_id);
+    InterruptibleSleep sleeper;
+    // Sleep first: the window then covers a full interval.
+    while (!sleeper.sleep_for(stop, milliseconds(interval_ms > 0 ? interval_ms : 1000))) {
+        try {
+            std::string message = stats.take_stats_json();
+            if (cli && cli->is_connected()) {
+                cli->publish(topic, message)->wait();
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Stats publish failed: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Stats publish failed: unknown exception" << std::endl;
         }
     }
 }

@@ -90,7 +90,8 @@ BOOST_AUTO_TEST_CASE(the_daq_loop_samples_then_stops_promptly) {
     std::vector<DaqHatDevice> hats{one_channel_hat()};
 
     std::jthread loop(daq_sample_loop, std::ref(static_cast<AnalogIo&>(daq)), hats,
-                      std::ref(store), static_cast<DataLogger*>(nullptr), kOneHourMs);
+                      std::ref(store), static_cast<DataLogger*>(nullptr), kOneHourMs,
+                      static_cast<StatsRegistry*>(nullptr));
     BOOST_REQUIRE(wait_until([&] { return !store.snapshot_sensors().empty(); }));
 
     auto start = steady_clock::now();
@@ -106,7 +107,8 @@ BOOST_AUTO_TEST_CASE(the_daq_loop_keeps_sampling_until_stopped) {
     double first_pass = 0;
 
     std::jthread loop(daq_sample_loop, std::ref(static_cast<AnalogIo&>(daq)), hats,
-                      std::ref(store), static_cast<DataLogger*>(nullptr), 1);
+                      std::ref(store), static_cast<DataLogger*>(nullptr), 1,
+                      static_cast<StatsRegistry*>(nullptr));
     BOOST_REQUIRE(wait_until([&] { return !store.snapshot_sensors().empty(); }));
     first_pass = store.snapshot_sensors().at(0).timestamp_ms;
     // A later pass has a later timestamp.
@@ -120,7 +122,7 @@ BOOST_AUTO_TEST_CASE(the_gpio_loop_samples_then_stops_promptly) {
     TelemetryStore store;
 
     std::jthread loop(gpio_sample_loop, std::ref(static_cast<DigitalIo&>(io)), std::ref(store),
-                      kOneHourMs);
+                      kOneHourMs, static_cast<StatsRegistry*>(nullptr));
     BOOST_REQUIRE(wait_until([&] { return !store.snapshot_gpio_states().empty(); }));
 
     auto start = steady_clock::now();
@@ -135,7 +137,7 @@ BOOST_AUTO_TEST_CASE(a_loop_given_an_already_stopped_token_does_no_work) {
     TelemetryStore store;
     std::stop_source source;
     source.request_stop();
-    gpio_sample_loop(source.get_token(), io, store, 1);  // returns at once
+    gpio_sample_loop(source.get_token(), io, store, 1, nullptr);  // returns at once
     BOOST_TEST(store.snapshot_gpio_states().empty());
 }
 

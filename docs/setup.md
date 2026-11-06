@@ -124,6 +124,10 @@ Only one runs at a time. Both run `start.sh`, which reads two files:
 | `/etc/nova/pi.env` | `NOVA_PI_NAME`, `NOVA_TARGET`, `NOVA_EXTRA_ARGS` | `sudo ./nova-pi.sh install --name <name> --target <binary>` |
 | `/etc/nova/novaGround-<env>.env` | `NOVA_BROKER`, `NOVA_BACKEND`, `NOVA_CONSOLE` for that environment | `Nova.ps1` on the ops PC, from `ops/nova.settings.ps1` |
 
+Optional settings, in either file: `NOVA_STATS=1` turns on the telemetry
+`seq`/timestamp fields and the `nova/stats/<node>` topic; see
+[instrumentation.md](instrumentation.md).
+
 Don't edit the `novaGround-<env>.env` files: `Nova.ps1` rewrites them on every
 `use`, `deploy` and `get-changes`, which is what keeps prod on prod's backend
 port and dev on dev's. If a value is wrong, fix it in `nova.settings.ps1` on the

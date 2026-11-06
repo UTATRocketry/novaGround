@@ -98,7 +98,12 @@ for e in prod dev; do
   fi
 done
 
-CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${BIN} --broker ${BROKER} --backend ${BACKEND} ${NOVA_EXTRA_ARGS:-}"
+# NOVA_STATS (runtime instrumentation) is in the env file but the tmux shell
+# does not inherit it, so pass it on the command line like NOVA_ENV.
+STATS_ENV=""
+[[ -n "${NOVA_STATS:-}" ]] && STATS_ENV="NOVA_STATS=$(printf '%q' "$NOVA_STATS") "
+
+CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${STATS_ENV}${BIN} --broker ${BROKER} --backend ${BACKEND} ${NOVA_EXTRA_ARGS:-}"
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   tmux new-session -d -s "$SESSION"

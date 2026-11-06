@@ -94,3 +94,16 @@ teardown() { teardown_sandbox; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"Killed session NovaGround-dev"* ]]
 }
+
+@test "passes NOVA_STATS from the env file on to the binary" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_STATS=1
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  grep -q 'NOVA_ENV=dev NOVA_STATE_DIR=/var/lib/nova/dev NOVA_STATS=1 .*/build/novaGround' "$CALLS"
+}
+
+@test "leaves NOVA_STATS off the command line when it isn't set" {
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  ! grep -q 'NOVA_STATS' "$CALLS"
+}

@@ -5,6 +5,7 @@
 #include <limits>
 #include <thread>
 
+#include "core/stats.hpp"
 #include "utils/interruptible_sleep.hpp"
 
 std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& hats) {
@@ -25,7 +26,8 @@ std::vector<std::string> build_sensor_headers(const std::vector<DaqHatDevice>& h
 void daq_sample_once(AnalogIo& daq,
                      const std::vector<DaqHatDevice>& daq_hats,
                      TelemetryStore& store,
-                     DataLogger* logger) {
+                     DataLogger* logger,
+                     StatsRegistry* stats) {
     std::vector<SensorSample> new_data;
     std::vector<double> values;
     size_t total_channels = 0;
@@ -41,10 +43,14 @@ void daq_sample_once(AnalogIo& daq,
             now.time_since_epoch())
             .count();
 
+    std::uint64_t read_errors = 0;
     for (const auto& hat : daq_hats) {
         for (int channel : hat.channels) {
             double value = std::numeric_limits<double>::quiet_NaN();
             bool ok = daq.read(hat, channel, value);
+            if (!ok) {
+                ++read_errors;
+            }
 
             SensorSample sd;
             sd.hat_id = hat.address;
@@ -56,6 +62,9 @@ void daq_sample_once(AnalogIo& daq,
         }
     }
 
+    if (stats) {
+        stats->count_daq_read_errors(read_errors);
+    }
     store.set_sensors(std::move(new_data));
     if (logger && logger->is_active()) {
         logger->log_sensor_row(timestamp_ms, values);
@@ -67,11 +76,16 @@ void daq_sample_loop(std::stop_token stop,
                      const std::vector<DaqHatDevice>& daq_hats,
                      TelemetryStore& store,
                      DataLogger* logger,
-                     int sample_interval_ms) {
+                     int sample_interval_ms,
+                     StatsRegistry* stats) {
     int interval_ms = sample_interval_ms > 0 ? sample_interval_ms : 1;
+    LoopStats* loop_stats = stats ? stats->loop("sampler", interval_ms) : nullptr;
     InterruptibleSleep sleeper;
     while (!stop.stop_requested()) {
-        daq_sample_once(daq, daq_hats, store, logger);
+        if (loop_stats) {
+            loop_stats->tick();
+        }
+        daq_sample_once(daq, daq_hats, store, logger, stats);
         if (sleeper.sleep_for(stop, std::chrono::milliseconds(interval_ms))) {
             break;
         }
@@ -89,9 +103,17 @@ void gpio_sample_once(DigitalIo& gpio, TelemetryStore& store) {
     }
 }
 
-void gpio_sample_loop(std::stop_token stop, DigitalIo& gpio, TelemetryStore& store, int interval_ms) {
+void gpio_sample_loop(std::stop_token stop,
+                      DigitalIo& gpio,
+                      TelemetryStore& store,
+                      int interval_ms,
+                      StatsRegistry* stats) {
+    LoopStats* loop_stats = stats ? stats->loop("gpio_sampler", interval_ms) : nullptr;
     InterruptibleSleep sleeper;
     while (!stop.stop_requested()) {
+        if (loop_stats) {
+            loop_stats->tick();
+        }
         gpio_sample_once(gpio, store);
         if (sleeper.sleep_for(stop, std::chrono::milliseconds(interval_ms))) {
             break;
