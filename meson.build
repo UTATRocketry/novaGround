@@ -58,20 +58,7 @@ libpaho = declare_dependency(dependencies: [pahomqttc_lib1, pahomqttc_lib2])
 # libcurl library (optional)
 curl_dep = dependency('libcurl', required: false)
 
-# The commit the binary was built from, reported in the stats message. A build
-# from a tarball, or one git refuses to read, reports "unknown".
-git_commit = 'unknown'
-git_prog = find_program('git', required: false)
-if git_prog.found()
-    git_head = run_command(git_prog, '-C', meson.project_source_root(),
-                           'rev-parse', '--short=12', 'HEAD', check: false)
-    if git_head.returncode() == 0 and git_head.stdout().strip() != ''
-        git_commit = git_head.stdout().strip()
-    endif
-endif
-
 common_cpp_args = [
-    '-DNOVA_GIT_COMMIT="' + git_commit + '"',
     '-DNOVA_DEFAULT_BROKER="localhost:1883"',
     '-DNOVA_DEFAULT_BACKEND="http://localhost:8000"',
     '-DNOVA_DEFAULT_VERBOSITY=1',

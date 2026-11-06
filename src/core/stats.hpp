@@ -129,11 +129,8 @@ private:
 // The node is the topic, not a field.
 struct StatsIdentity {
     std::string node;       // the MQTT node id (novaGround, novaThermo, novaMock); names the topic
-    std::string env;        // NOVA_ENV, reported only
     std::string build_id;
-    std::string git_commit;
-    std::string actuation = "enabled";  // enabled, disabled, or an only-actuators list
-    int interval_ms = 1000;             // how often the stats message is published
+    int interval_ms = 1000;  // how often the stats message is published
 };
 
 class StatsRegistry {

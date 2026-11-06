@@ -224,10 +224,7 @@ void StatsRegistry::count_daq_read_errors(std::uint64_t n) {
 std::string StatsRegistry::identity_json() {
     json::object root;
     root["schema"] = kSchema;
-    root["env"] = identity_.env;
     root["build_id"] = identity_.build_id;
-    root["git_commit"] = identity_.git_commit;
-    root["actuation"] = identity_.actuation;
     root["started_ms"] = started_ms_;
     root["stats_interval_ms"] = identity_.interval_ms;
 

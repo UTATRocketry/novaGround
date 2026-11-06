@@ -41,8 +41,7 @@ soon as it subscribes. It describes the process, not the last second:
 ```json
 {
   "schema": 1,
-  "env": "dev", "build_id": "novaGround", "git_commit": "7c19b27a1b2c",
-  "actuation": "enabled",
+  "build_id": "novaGround",
   "started_ms": 1793000000000,
   "stats_interval_ms": 1000,
   "loops": {
@@ -55,12 +54,10 @@ soon as it subscribes. It describes the process, not the last second:
 }
 ```
 
-- **`git_commit`** is the commit the binary was *built* from. The Pi report's
-  commit is the checkout on disk, which differs if someone pulled without
-  rebuilding or restarting.
-- **`env`** is the `NOVA_ENV` the process read. It is reported, never decided on.
-- **`actuation`** is always `enabled` until bench-safety modes (part D) exist.
-  It is fixed for the life of the process, which is why it is here.
+- **No settings yet.** The message deliberately does not list the environment,
+  the commit the binary was built from, or the actuation mode. The Pi report
+  already says which environment is running, and the others have no use yet.
+  It could grow into a record of every setting the program runs with.
 - **`started_ms`** (system clock) tells a new run from an old retained message:
   the broker keeps the last info message after the process dies, and a run with
   `NOVA_STATS` off publishes none and does not clear it.

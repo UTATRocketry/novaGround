@@ -122,9 +122,6 @@ msgs = [json.loads(line) for line in sys.stdin if line.strip()]
 if len(msgs) < 2:
     sys.exit("expected two stats messages, got %d" % len(msgs))
 msg = msgs[-1]
-for key in ("node", "env", "build_id", "git_commit", "actuation"):
-    if key in msg:
-        sys.exit("%r belongs in the info message, not the stats message" % key)
 if msgs[1]["seq"] != msgs[0]["seq"] + 1:
     sys.exit("stats seq should step by one: %r %r" % (msgs[0]["seq"], msgs[1]["seq"]))
 gap = msgs[1]["time_ms"] - msgs[0]["time_ms"]
@@ -157,8 +154,11 @@ import json, sys
 info = json.loads(sys.stdin.readline())
 if "node" in info:
     sys.exit("the topic names the node; it is not a field")
-if info["env"] != "dev" or info["actuation"] != "enabled" or not info["git_commit"] or not info["build_id"]:
-    sys.exit("identity: %r" % info)
+for key in ("env", "git_commit", "actuation"):
+    if key in info:
+        sys.exit("%r is not part of the info message: %r" % (key, info))
+if info["build_id"] != "novaMock":
+    sys.exit("build_id: %r" % info)
 if info["stats_interval_ms"] != 500:
     sys.exit("stats_interval_ms: %r" % info)
 cfg = {name: l["configured_ms"] for name, l in info["loops"].items()}

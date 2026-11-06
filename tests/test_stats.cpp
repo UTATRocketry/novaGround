@@ -19,9 +19,7 @@ namespace {
 StatsIdentity identity() {
     StatsIdentity id;
     id.node = "novaTest";
-    id.env = "dev";
     id.build_id = "novaTest";
-    id.git_commit = "abc1234";
     id.interval_ms = 250;
     return id;
 }
@@ -313,11 +311,12 @@ BOOST_AUTO_TEST_CASE(the_info_message_has_identity_loops_and_how_to_read_the_sta
     auto info = parse(stats.identity_json());
 
     BOOST_TEST(!info.contains("node"));  // the topic names it
+    // Nothing about the settings the program runs with, for now.
+    for (const char* key : {"env", "git_commit", "actuation"}) {
+        BOOST_TEST_CONTEXT(key) { BOOST_TEST(!info.contains(key)); }
+    }
     BOOST_TEST(number(info.at("schema")) == 1.0);
-    BOOST_TEST(text(info.at("env")) == "dev");
     BOOST_TEST(text(info.at("build_id")) == "novaTest");
-    BOOST_TEST(text(info.at("git_commit")) == "abc1234");
-    BOOST_TEST(text(info.at("actuation")) == "enabled");
     BOOST_TEST(number(info.at("stats_interval_ms")) == 250.0);
     BOOST_TEST(number(info.at("started_ms")) > 1.0e12);
 

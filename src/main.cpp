@@ -28,9 +28,6 @@ using namespace std::chrono;
 #ifndef NOVA_BUILD_ID
 #define NOVA_BUILD_ID "novaGround"
 #endif
-#ifndef NOVA_GIT_COMMIT
-#define NOVA_GIT_COMMIT "unknown"
-#endif
 #ifndef NOVA_DEFAULT_BROKER
 #define NOVA_DEFAULT_BROKER "localhost:1883"
 #endif
@@ -125,9 +122,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     }
     StatsIdentity identity;
     identity.node = config.node_id;
-    identity.env = nova_env ? nova_env : "";
     identity.build_id = NOVA_BUILD_ID;
-    identity.git_commit = NOVA_GIT_COMMIT;
     identity.interval_ms = stats_interval_ms;
     app->stats = std::make_unique<StatsRegistry>(std::move(identity), stats_on);
     if (stats_on) {
