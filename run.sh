@@ -12,6 +12,8 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Tests set NOVA_PI_ROOT to a scratch directory; on a Pi it is empty.
+ROOT="${NOVA_PI_ROOT:-}"
 ENVIRONMENT="dev"
 TARGET=""; BROKER=""; BACKEND=""
 KILL_SESSION="false"
@@ -60,9 +62,9 @@ if [[ "$ENVIRONMENT" != "prod" && "$ENVIRONMENT" != "dev" ]]; then
 fi
 SESSION="NovaGround-${ENVIRONMENT}"
 
-ENV_FILE="/etc/nova/novaGround-${ENVIRONMENT}.env"
+ENV_FILE="${ROOT}/etc/nova/novaGround-${ENVIRONMENT}.env"
 # shellcheck disable=SC1091
-[[ -f /etc/nova/pi.env ]] && source /etc/nova/pi.env
+[[ -f "${ROOT}/etc/nova/pi.env" ]] && source "${ROOT}/etc/nova/pi.env"
 # shellcheck disable=SC1090
 [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
 

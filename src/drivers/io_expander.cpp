@@ -1,31 +1,23 @@
 ﻿#include "io_expander.hpp"
 
-TCA9535::TCA9535(const char* i2c_bus, uint8_t address)
-    : device_address(address) {
-    i2c_fd = open(i2c_bus, O_RDWR);
-    if (i2c_fd < 0) {
+#include <iostream>
+#include <thread>
+
+TCA9535::TCA9535(I2cBus& bus, uint8_t address, std::chrono::milliseconds retry_delay)
+    : bus_(bus), device_address(address), retry_delay_(retry_delay) {
+    if (!bus_.is_ready()) {
         set_error("Failed to open I2C bus");
         return;
     }
-
-    if (ioctl(i2c_fd, I2C_SLAVE, device_address) < 0) {
+    if (!bus_.attach(device_address)) {
         set_error("Failed to set I2C device address");
-        close(i2c_fd);
-        i2c_fd = -1;
         return;
     }
-
     ready_ = true;
 }
 
-TCA9535::~TCA9535() {
-    if (i2c_fd >= 0) {
-        close(i2c_fd);
-    }
-}
-
 bool TCA9535::is_ready() const {
-    return ready_ && i2c_fd >= 0;
+    return ready_ && bus_.is_ready();
 }
 
 const std::string& TCA9535::last_error() const {
@@ -61,7 +53,7 @@ bool TCA9535::write_output(const std::bitset<16>& state) {
             std::cout << "Relay state written successfully after retry." << std::endl;
             return true;
         }
-        usleep(50000);
+        std::this_thread::sleep_for(retry_delay_);
     }
 
     std::cerr << "Failed to write relay state after retries." << std::endl;
@@ -77,13 +69,7 @@ bool TCA9535::read_input(uint8_t port, uint8_t& value) {
 }
 
 bool TCA9535::write_register(uint8_t reg, uint8_t value) {
-    if (i2c_fd < 0) {
-        set_error("I2C device not ready");
-        return false;
-    }
-
-    uint8_t buffer[2] = {reg, value};
-    if (write(i2c_fd, buffer, 2) != 2) {
+    if (!bus_.write_reg8(device_address, reg, value)) {
         set_error("Failed to write I2C register");
         return false;
     }
@@ -91,17 +77,8 @@ bool TCA9535::write_register(uint8_t reg, uint8_t value) {
 }
 
 bool TCA9535::read_register(uint8_t reg, uint8_t& value) {
-    if (i2c_fd < 0) {
-        set_error("I2C device not ready");
-        return false;
-    }
-
-    if (write(i2c_fd, &reg, 1) != 1) {
-        set_error("Failed to select I2C register");
-        return false;
-    }
-    if (read(i2c_fd, &value, 1) != 1) {
-        set_error("Failed to read from I2C register");
+    if (!bus_.read_reg8(device_address, reg, value)) {
+        set_error("Failed to read I2C register");
         return false;
     }
     return true;

@@ -4,7 +4,7 @@
 
 #include "utils/json_utils.hpp"
 
-RelayController::RelayController(TCA9535* expander, TelemetryStore* telemetry, DataLogger* logger)
+RelayController::RelayController(RelayBank* expander, TelemetryStore* telemetry, DataLogger* logger)
     : expander_(expander), telemetry_(telemetry), logger_(logger) {}
 
 bool RelayController::available() const {
