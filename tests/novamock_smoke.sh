@@ -43,12 +43,11 @@ EOF
 mkdir "$WORK/run"
 cd "$WORK/run"   # novaMock records to ./data
 NOVA_ENV=dev \
-NOVA_STATS=1 \
-NOVA_STATS_INTERVAL_MS=500 \
 NOVA_STATE_DIR="$WORK/state" \
 NOVA_SIM_SCENARIO="$WORK/scenario.json" \
   "$NOVAMOCK" --broker "127.0.0.1:$PORT" --backend "http://127.0.0.1:9" \
-              --sample-ms 20 --publish-ms 50 > "$WORK/novamock.log" 2>&1 &
+              --sample-ms 20 --publish-ms 50 --stats on --stats-interval-ms 500 \
+              > "$WORK/novamock.log" 2>&1 &
 PIDS+=($!)
 
 # 1. Telemetry with the scenario's sensor value and GPIO input arrives.
@@ -92,7 +91,7 @@ python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); sys.exit(0 if d.g
   "$WORK/state/last_upload.json" || fail "last_upload.json should report a failed upload: $(cat "$WORK/state/last_upload.json")"
 echo "ok: the failed upload was reported"
 
-# 4. With NOVA_STATS on (this run), telemetry carries seq and timestamps and the
+# 4. With --stats on (this run), telemetry carries seq and timestamps and the
 # stats topic reports the loops and the two commands above.
 cat > "$WORK/check_seq.py" <<'EOF'
 import json, sys
@@ -112,9 +111,9 @@ if len(seqs) < 3 or seqs != sorted(seqs) or len(set(seqs)) != len(seqs):
 EOF
 python3 "$WORK/check_seq.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/telemetry/engine -W 2) \
   || fail "telemetry seq and timestamps"
-echo "ok: telemetry carries seq and timestamps with NOVA_STATS on"
+echo "ok: telemetry carries seq and timestamps with --stats on"
 
-# The stats message: measurements only, at the interval NOVA_STATS_INTERVAL_MS
+# The stats message: measurements only, at the interval --stats-interval-ms
 # asked for (500 ms), with the loops and the two commands above.
 cat > "$WORK/check_stats.py" <<'EOF'
 import json, sys
@@ -126,7 +125,7 @@ if msgs[1]["seq"] != msgs[0]["seq"] + 1:
     sys.exit("stats seq should step by one: %r %r" % (msgs[0]["seq"], msgs[1]["seq"]))
 gap = msgs[1]["time_ms"] - msgs[0]["time_ms"]
 if not 350 <= gap <= 800:
-    sys.exit("NOVA_STATS_INTERVAL_MS=500 but the messages are %d ms apart" % gap)
+    sys.exit("--stats-interval-ms 500 but the messages are %d ms apart" % gap)
 loops = msg["loops"]
 for name in ("sampler", "publisher", "gpio_sampler"):
     if name not in loops:
@@ -171,13 +170,14 @@ python3 "$WORK/check_info.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/
   || fail "retained info message"
 echo "ok: nova/stats/novaMock/info is retained, with the identity and loop periods"
 
-# 5. With NOVA_STATS off, none of it appears: telemetry is as before and no
-# stats message is published.
+# 5. With stats off, none of it appears: telemetry is as before and no stats
+# message is published. The flag here is malformed, which must be reported and
+# ignored, not stop the program.
 kill "${PIDS[1]}" 2>/dev/null || true
 wait "${PIDS[1]}" 2>/dev/null || true
-env -u NOVA_STATS NOVA_ENV=dev NOVA_STATE_DIR="$WORK/state2" NOVA_SIM_SCENARIO="$WORK/scenario.json" \
+NOVA_ENV=dev NOVA_STATE_DIR="$WORK/state2" NOVA_SIM_SCENARIO="$WORK/scenario.json" \
   "$NOVAMOCK" --broker "127.0.0.1:$PORT" --backend "http://127.0.0.1:9" \
-              --sample-ms 20 --publish-ms 50 > "$WORK/novamock2.log" 2>&1 &
+              --sample-ms 20 --publish-ms 50 --stats maybe > "$WORK/novamock2.log" 2>&1 &
 PIDS+=($!)
 cat > "$WORK/check_no_stats.py" <<'EOF'
 import json, sys
@@ -195,9 +195,10 @@ if n == 0:
     sys.exit("no telemetry from the second run")
 EOF
 python3 "$WORK/check_no_stats.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/telemetry/engine -W 3) \
-  || fail "telemetry should be unchanged with NOVA_STATS off"
+  || fail "telemetry should be unchanged with stats off"
 [[ -z "$(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock -W 2 -C 1 || true)" ]] \
-  || fail "a stats message was published with NOVA_STATS off"
+  || fail "a stats message was published with stats off"
 # (The first run's retained info message is still on the broker, so the info
 # topic can't show this; the stats topic can.)
-echo "ok: nothing extra is published with NOVA_STATS off"
+grep -q "Invalid --stats value 'maybe'" "$WORK/novamock2.log" || fail "no warning for --stats maybe"
+echo "ok: a malformed --stats is reported and ignored, and nothing extra is published"

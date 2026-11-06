@@ -48,6 +48,11 @@ fi
 
 ARGS=(--broker "$NOVA_BROKER" --backend "$NOVA_BACKEND")
 
+# Runtime instrumentation, passed on as written: the binary reports a value it
+# cannot read and carries on. Before NOVA_EXTRA_ARGS, so that can override them.
+[[ -n "${NOVA_STATS:-}" ]] && ARGS+=(--stats "$NOVA_STATS")
+[[ -n "${NOVA_STATS_INTERVAL_MS:-}" ]] && ARGS+=(--stats-interval-ms "$NOVA_STATS_INTERVAL_MS")
+
 # Word-splitting is intended here so NOVA_EXTRA_ARGS can carry several flags.
 # shellcheck disable=SC2206
 [[ -n "${NOVA_EXTRA_ARGS:-}" ]] && ARGS+=($NOVA_EXTRA_ARGS)

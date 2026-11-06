@@ -1,23 +1,26 @@
-# Runtime instrumentation (`NOVA_STATS`)
+# Runtime instrumentation (`--stats`)
 
 Timing data for benchmarking and bench tests, without attaching a profiler.
 
-| Setting | Effect |
+| Flag | Effect |
 |---|---|
-| `NOVA_STATS` | `1`, `true`, `on`, `yes` turn everything below on. Unset, empty, `0`, `false`, `off`, `no` leave it off, and nothing below happens: telemetry is exactly as before. |
-| `NOVA_STATS_INTERVAL_MS` | How often the stats message is published, in whole milliseconds. Default 1000. |
+| `--stats <on\|off>` | `on` (also `1`, `true`, `yes`) turns everything below on. `off` (also `0`, `false`, `no`; the default) leaves it off, and nothing below happens: telemetry is exactly as before. |
+| `--stats-interval-ms <ms>` | How often the stats message is published, in whole milliseconds. Default 1000. |
 
-Both are read from the environment, so they belong in the Pi's env file
-(`/etc/nova/novaGround-<env>.env`), which `Nova.ps1` writes from
-`ops/nova.settings.ps1`. The binary's defaults are off and 1000 ms. The
+On the Pi the flags come from the env file (`/etc/nova/novaGround-<env>.env`,
+written by `Nova.ps1` from `ops/nova.settings.ps1`): `start.sh` and `run.sh` turn
+`NOVA_STATS` and `NOVA_STATS_INTERVAL_MS` into `--stats` and
+`--stats-interval-ms`, passing the value as written and leaving the flag off when
+the variable is unset or empty. They come before `NOVA_EXTRA_ARGS`, so that can
+override them for one run. The binary does not read these variables itself. The
 per-environment defaults (on in dev, off in prod) are the ops settings' job, not
-the code's. `run.sh` passes both on to the bench session; `start.sh` gets them
-from the unit's `EnvironmentFile`.
+the code's.
 
-A value the program cannot read (`NOVA_STATS=maybe`, `NOVA_STATS_INTERVAL_MS=0`
-or `1.5`) is warned about at startup and ignored: stats stay off, or the interval
-stays 1000. A typo in a diagnostics setting must never keep the program from
-commanding valves.
+A value the program cannot read (`--stats maybe`, `--stats-interval-ms 0` or
+`1.5`, or a flag with no value) is reported on stderr and ignored: stats stay off,
+or the interval stays 1000, and the program starts. Unlike the other flags, these
+never exit with an error: a typo in a diagnostics setting must not keep the
+program from commanding valves.
 
 ## Where things are published
 
@@ -28,7 +31,7 @@ Everything is under `nova/stats/<node>`, where `<node>` is `novaGround`,
 | Topic | Retained | Rate | Holds |
 |---|---|---|---|
 | `nova/stats/<node>/info` | yes | on every (re)connect | what this process is and how to read its stats |
-| `nova/stats/<node>` | no | every `NOVA_STATS_INTERVAL_MS` | measurements only |
+| `nova/stats/<node>` | no | every `--stats-interval-ms` | measurements only |
 
 Telemetry (`nova/telemetry/engine`) also gains three fields, described last.
 

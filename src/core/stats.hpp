@@ -18,20 +18,20 @@
 //   nova/stats/<node>/info  retained; what this process is and how it measures
 //                           (identity_json). Rarely changes, so a late
 //                           subscriber needs it once.
-//   nova/stats/<node>       not retained; one second (or NOVA_STATS_INTERVAL_MS)
-//                           of measurements only (take_stats_json).
+//   nova/stats/<node>       not retained; one interval (--stats-interval-ms) of
+//                           measurements only (take_stats_json).
 //
 // Intervals are measured with steady_clock. Only timestamps that leave the
 // process use system_clock.
 
-// The NOVA_STATS setting. Unset or empty is off. "1", "true", "on" and "yes"
+// The --stats value. Empty is off. "1", "true", "on" and "yes"
 // are on; "0", "false", "off" and "no" are off (any letter case). Returns false
 // for anything else and leaves `enabled` off: instrumentation must never stop
 // the program, so the caller warns and carries on.
 bool parse_stats_setting(const char* value, bool& enabled);
 
-// The NOVA_STATS_INTERVAL_MS setting: a whole number of milliseconds, 1 or more.
-// Unset or empty leaves `interval_ms` as it was (the caller's default) and
+// The --stats-interval-ms value: a whole number of milliseconds, 1 or more.
+// Empty (or null) leaves `interval_ms` as it was (the caller's default) and
 // returns true. Returns false for anything else (letters, fractions, zero,
 // negative, trailing text, out of range), also leaving it unchanged.
 bool parse_stats_interval(const char* value, int& interval_ms);

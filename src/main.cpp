@@ -48,7 +48,6 @@ namespace {
 const std::string kCommandTopic = "nova/command";
 const std::string kCommandSourceId = "novaOps";
 const int kGpioSampleIntervalMs = 50;
-const int kDefaultStatsIntervalMs = 1000;
 
 // Everything the program owns once it is built. Members are destroyed in
 // reverse order, so each one outlives what points at it. Not movable: the
@@ -105,21 +104,10 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     std::cout << "Build ID: " << config.node_id
               << "  environment: " << (nova_env && *nova_env ? nova_env : "(not set)") << std::endl;
 
-    // NOVA_STATS comes from the Pi's env file. A value we cannot read turns
-    // instrumentation off rather than stopping the program: a typo in a
-    // diagnostics setting must never keep the valves from being commanded.
-    bool stats_on = false;
-    if (!parse_stats_setting(std::getenv("NOVA_STATS"), stats_on)) {
-        std::cerr << "NOVA_STATS='" << std::getenv("NOVA_STATS")
-                  << "' is not on/off (1/0, true/false, on/off, yes/no); stats are off." << std::endl;
-    }
-    // Same rule for the interval: a bad value keeps the default.
-    int stats_interval_ms = kDefaultStatsIntervalMs;
-    if (!parse_stats_interval(std::getenv("NOVA_STATS_INTERVAL_MS"), stats_interval_ms)) {
-        std::cerr << "NOVA_STATS_INTERVAL_MS='" << std::getenv("NOVA_STATS_INTERVAL_MS")
-                  << "' is not a whole number of milliseconds (1 or more); using "
-                  << kDefaultStatsIntervalMs << "." << std::endl;
-    }
+    // --stats and --stats-interval-ms were read (and any bad value reported and
+    // ignored) by parse_args.
+    const bool stats_on = config.stats;
+    const int stats_interval_ms = config.stats_interval_ms;
     StatsIdentity identity;
     identity.node = config.node_id;
     identity.build_id = NOVA_BUILD_ID;

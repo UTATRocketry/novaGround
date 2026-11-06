@@ -98,14 +98,14 @@ for e in prod dev; do
   fi
 done
 
-# NOVA_STATS and NOVA_STATS_INTERVAL_MS (runtime instrumentation) are in the env
-# file but the tmux shell does not inherit them, so pass them on the command
-# line like NOVA_ENV.
-STATS_ENV=""
-[[ -n "${NOVA_STATS:-}" ]] && STATS_ENV+="NOVA_STATS=$(printf '%q' "$NOVA_STATS") "
-[[ -n "${NOVA_STATS_INTERVAL_MS:-}" ]] && STATS_ENV+="NOVA_STATS_INTERVAL_MS=$(printf '%q' "$NOVA_STATS_INTERVAL_MS") "
+# NOVA_STATS and NOVA_STATS_INTERVAL_MS (runtime instrumentation) from the env
+# file become flags, passed on as written: the binary reports a value it cannot
+# read and carries on. Before NOVA_EXTRA_ARGS, so that can override them.
+STATS_ARGS=""
+[[ -n "${NOVA_STATS:-}" ]] && STATS_ARGS+="--stats $(printf '%q' "$NOVA_STATS") "
+[[ -n "${NOVA_STATS_INTERVAL_MS:-}" ]] && STATS_ARGS+="--stats-interval-ms $(printf '%q' "$NOVA_STATS_INTERVAL_MS") "
 
-CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${STATS_ENV}${BIN} --broker ${BROKER} --backend ${BACKEND} ${NOVA_EXTRA_ARGS:-}"
+CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${BIN} --broker ${BROKER} --backend ${BACKEND} ${STATS_ARGS}${NOVA_EXTRA_ARGS:-}"
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   tmux new-session -d -s "$SESSION"

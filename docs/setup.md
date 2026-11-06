@@ -126,7 +126,8 @@ Only one runs at a time. Both run `start.sh`, which reads two files:
 
 Optional settings, in either file: `NOVA_STATS=1` turns on the telemetry
 `seq`/timestamp fields and the `nova/stats/<node>` topics, and
-`NOVA_STATS_INTERVAL_MS` sets how often the stats are published; see
+`NOVA_STATS_INTERVAL_MS` sets how often the stats are published. The scripts pass
+them to the binary as `--stats` and `--stats-interval-ms`; see
 [instrumentation.md](instrumentation.md).
 
 Don't edit the `novaGround-<env>.env` files: `Nova.ps1` rewrites them on every
