@@ -1,5 +1,6 @@
 #include <boost/test/unit_test.hpp>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,7 @@ BOOST_AUTO_TEST_CASE(the_pwm_driver_keeps_pulse_widths_and_off_is_zero) {
 }
 
 BOOST_AUTO_TEST_CASE(gpio_follows_the_real_drivers_contract) {
-    SimDigitalIo io({{5, 1}});
+    SimDigitalIo io(std::map<int, int>{{5, 1}});
     int v = -1;
     int w = -1;
     BOOST_TEST(!io.write(17, 1));  // not configured
@@ -49,7 +50,7 @@ BOOST_AUTO_TEST_CASE(gpio_follows_the_real_drivers_contract) {
 }
 
 BOOST_AUTO_TEST_CASE(gpio_input_listing_only_has_inputs) {
-    SimDigitalIo io({{5, 1}});
+    SimDigitalIo io(std::map<int, int>{{5, 1}});
     io.set_direction(5, "in");
     io.set_direction(6, "in");
     io.set_direction(17, "out");

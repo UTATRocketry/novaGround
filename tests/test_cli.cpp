@@ -6,6 +6,17 @@
 
 #include "utils/cli.hpp"
 
+// Boost.Test prints both sides of a failed comparison, and an enum class has no
+// operator<< of its own. ParseStatus is in the global namespace, so ADL finds this.
+inline std::ostream& operator<<(std::ostream& os, ParseStatus s) {
+    switch (s) {
+        case ParseStatus::Run: return os << "Run";
+        case ParseStatus::ExitOk: return os << "ExitOk";
+        case ParseStatus::ExitError: return os << "ExitError";
+    }
+    return os << "ParseStatus(" << static_cast<int>(s) << ")";
+}
+
 namespace {
 RuntimeConfig defaults() {
     RuntimeConfig d;

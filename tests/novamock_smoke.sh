@@ -3,9 +3,9 @@
 # private broker. Checks that telemetry carries the scenario's values and that a
 # data-saving command records them to CSV.
 #
-# Sandbox (TESTING-PLAN.md section 2.1): the broker listens on loopback on a
-# free port and is never 1883; everything novaMock writes goes under a scratch
-# directory; the "backend" is a closed port, so nothing is uploaded anywhere.
+# Sandbox: the broker listens on loopback on a free port and is never 1883; 
+# everything novaMock writes goes under a scratch directory; 
+# the "backend" is a closed port, so nothing is uploaded anywhere.
 set -euo pipefail
 
 NOVAMOCK="${1:?usage: novamock_smoke.sh <path to novaMock>}"
