@@ -158,6 +158,8 @@ public:
 
     void count_publish_failure();
     void count_daq_read_errors(std::uint64_t n);
+    // Actuator read-backs (relay, servo channel, GPIO) that failed.
+    void count_actuator_read_errors(std::uint64_t n);
 
     // The retained info message, as JSON text.
     std::string identity_json();
@@ -183,6 +185,7 @@ private:
     std::map<std::string, CommandStats> commands_;
     std::uint64_t publish_failures_ = 0;
     std::uint64_t daq_read_errors_ = 0;
+    std::uint64_t actuator_read_errors_ = 0;
     std::uint64_t stats_seq_ = 0;
 
     std::mutex seq_mutex_;

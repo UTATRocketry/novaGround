@@ -91,6 +91,14 @@ python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); sys.exit(0 if d.g
   "$WORK/state/last_upload.json" || fail "last_upload.json should report a failed upload: $(cat "$WORK/state/last_upload.json")"
 echo "ok: the failed upload was reported"
 
+# Drive one of each actuator, for the state read-back checked below.
+for c in '{"type":"relay","id":3,"state":false}' \
+         '{"type":"servo","id":2,"angle":1500}' \
+         '{"type":"gpio","id":17,"state":true}'; do
+  mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+    -m "{\"source\":\"novaOps\",\"command\":$c}"
+done
+
 # 4. With --stats on (this run), telemetry carries seq and timestamps and the
 # stats topic reports the loops and the two commands above.
 cat > "$WORK/check_seq.py" <<'EOF'
@@ -169,6 +177,33 @@ EOF
 python3 "$WORK/check_info.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock/info --retained-only -W 5 -C 1) \
   || fail "retained info message"
 echo "ok: nova/stats/novaMock/info is retained, with the identity and loop periods"
+
+# The actuator state, read back from the (simulated) drivers: retained, so a
+# subscriber that arrives now gets it at once. Relay 3 is off, the rest on;
+# servo 2 pulses 1500 us, the others are off; GPIO 17 is high, the others low.
+cat > "$WORK/check_state.py" <<'EOF'
+import json, sys
+msg = json.loads(sys.stdin.readline())
+if msg["relays"] != {"ok": True, "mask": 0xFFFF & ~(1 << 3)}:
+    sys.exit("relays: %r" % msg["relays"])
+servos = msg["servos"]
+if not servos["ok"] or len(servos["channels"]) != 16:
+    sys.exit("servos: %r" % servos)
+for ch in servos["channels"]:
+    if ch["id"] == 2:
+        if ch["output"] != "pulse" or ch["pulse_us"] != 1500:
+            sys.exit("servo 2: %r" % ch)
+    elif ch["output"] != "off":
+        sys.exit("servo %d should be off: %r" % (ch["id"], ch))
+gpios = {g["pin_id"]: g["state"] for g in msg["gpios"]["outputs"]}
+if not msg["gpios"]["ok"] or gpios != {17: 1, 27: 0, 22: 0}:
+    sys.exit("gpios: %r" % msg["gpios"])
+if msg["time_ms"] < 1e12:
+    sys.exit("time_ms: %r" % msg["time_ms"])
+EOF
+python3 "$WORK/check_state.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/state/novaMock --retained-only -W 5 -C 1) \
+  || fail "retained actuator state"
+echo "ok: nova/state/novaMock is retained and matches what the commands did"
 
 # 5. With stats off, none of it appears: telemetry is as before and no stats
 # message is published. The flag here is malformed, which must be reported and

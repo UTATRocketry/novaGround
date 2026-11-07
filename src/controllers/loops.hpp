@@ -5,6 +5,7 @@
 #include <stop_token>
 #include <string>
 
+#include "core/actuator_state.hpp"
 #include "core/command_router.hpp"
 #include "core/stats.hpp"
 #include "core/telemetry.hpp"
@@ -36,6 +37,19 @@ void stats_loop(std::stop_token stop,
                 StatsRegistry& stats,
                 std::string node_id,
                 int interval_ms);
+
+// Reads the actuators back from their drivers and publishes the result,
+// retained (QoS 1), on state_topic() every interval_ms, starting at once. Start
+// it only when stats are enabled; read errors are counted in `stats`.
+void state_loop(std::stop_token stop,
+                mqtt::async_client_ptr cli,
+                ActuatorSources sources,
+                StatsRegistry& stats,
+                std::string node_id,
+                int interval_ms);
+
+// nova/state/<node_id>: what the actuators hold, as read back from the drivers.
+std::string state_topic(const std::string& node_id);
 
 // nova/stats/<node_id>: the measurements. The node is the topic, not a field.
 std::string stats_topic(const std::string& node_id);

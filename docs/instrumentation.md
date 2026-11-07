@@ -33,7 +33,9 @@ Everything is under `nova/stats/<node>`, where `<node>` is `novaGround`,
 | `nova/stats/<node>/info` | yes | on every (re)connect | what this process is and how to read its stats |
 | `nova/stats/<node>` | no | every `--stats-interval-ms` | measurements only |
 
-Telemetry (`nova/telemetry/engine`) also gains three fields, described last.
+The actuators' state, read back from the drivers, is on `nova/state/<node>` (next
+section). Telemetry (`nova/telemetry/engine`) also gains three fields, described
+last.
 
 ### The info message (retained)
 
@@ -112,7 +114,45 @@ soon as it subscribes. It describes the process, not the last second:
     which is after the driver write. Commands that a controller rejects (bad id,
     hardware unavailable) are counted too: they did reach their handler.
 - **`publish_failures`**: telemetry publishes that threw. **`daq_read_errors`**:
-  channel reads that failed (published as NaN).
+  channel reads that failed (published as NaN). **`actuator_read_errors`**:
+  actuator read-backs that failed (see below).
+
+## Actuator state (`nova/state/<node>`)
+
+What the hardware holds, read back from the drivers: the TCA9535's output
+registers, each PCA9685 channel's registers, and the GPIO output lines. It is
+not what was commanded (telemetry and the logs have that), so a bench script can
+check that a restore really reached the chips. Reading writes nothing.
+
+Published retained (QoS 1) as soon as the process connects, then every
+`--stats-interval-ms`, so a subscriber that arrives later gets the last state at
+once. `time_ms` says when it was read; after the process dies the broker keeps
+the last message, so check it.
+
+```json
+{
+  "schema": 1, "time_ms": 1793000041900,
+  "relays": { "ok": true, "mask": 65531 },
+  "servos": { "ok": true, "channels": [ { "id": 0, "output": "off" },
+                                        { "id": 1, "output": "pulse", "pulse_us": 1498 } ] },
+  "gpios":  { "ok": true, "outputs": [ { "pin_id": 17, "state": 1 }, { "pin_id": 27, "state": 0 } ] }
+}
+```
+
+- **`relays.mask`**: bit *i* is relay *i* (the relay command's `id`), so 65531 is
+  every relay on except relay 2.
+- **`servos.channels`**: all 16 channels. `output` is `off` (held low, which is
+  also a channel that was never written), `on` (held high), `pulse` or
+  `unreadable`. `pulse_us` is derived from the chip's tick counts, so it can be
+  one tick (about 5 us at 50 Hz) away from the width that was commanded.
+- **`gpios.outputs`**: the output pins and the level each is driven to. A pin
+  that could not be read is left out.
+- **`ok`** is false if any read in that section failed; each failed read adds to
+  `actuator_read_errors` in the stats message. A section is absent when that
+  hardware is not available.
+- **Cost.** Each interval is 2 register reads for the relays and 4 or 5 per
+  servo channel (64 to 80 in all) on the I2C bus, plus the GPIO lines. Each chip's
+  register access is serialized with its commands.
 
 ## Telemetry fields
 
@@ -130,6 +170,7 @@ timestamps are only as good as the clock sync.
 
 ## Not done yet
 
-The consumer's queue depth (paho does not expose it) and actuator state read back
-from the drivers. Intervals use `steady_clock`; only `time_ms`, `started_ms`,
+The consumer's queue depth (paho does not expose it). The relay read-back is the
+output register, not the pin level, so a pin shorted or held by a load is not
+detected. Intervals use `steady_clock`; only `time_ms`, `started_ms`,
 `sample_ms` and `publish_ms`, which leave the process, use the system clock.

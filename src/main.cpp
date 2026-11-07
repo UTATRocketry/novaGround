@@ -15,6 +15,7 @@
 #include "controllers/relay_controller.hpp"
 #include "controllers/sampler.hpp"
 #include "controllers/servo_controller.hpp"
+#include "core/actuator_state.hpp"
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
 #include "core/stats.hpp"
@@ -116,7 +117,8 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     if (stats_on) {
         std::cout << "Stats: on, every " << stats_interval_ms << " ms to " << stats_topic(config.node_id)
                   << " (identity, retained, on " << stats_info_topic(config.node_id)
-                  << "); seq and timestamps in telemetry" << std::endl;
+                  << "); actuator state, retained, on " << state_topic(config.node_id)
+                  << "; seq and timestamps in telemetry" << std::endl;
     } else {
         std::cout << "Stats: off" << std::endl;
     }
@@ -276,6 +278,18 @@ void run(App& app, std::stop_token stop) {
     if (app.stats->enabled()) {
         threads.emplace_back(stats_loop,
                              app.cli,
+                             std::ref(*app.stats),
+                             app.config.node_id,
+                             app.stats->identity().interval_ms);
+
+        // Read-only: reads the chips' registers and the GPIO lines, writes none.
+        ActuatorSources sources;
+        sources.relays = hw.relays.get();
+        sources.servo = hw.servo.get();
+        sources.gpio = hw.gpio.get();
+        threads.emplace_back(state_loop,
+                             app.cli,
+                             sources,
                              std::ref(*app.stats),
                              app.config.node_id,
                              app.stats->identity().interval_ms);

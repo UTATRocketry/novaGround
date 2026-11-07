@@ -23,6 +23,7 @@ public:
     bool read(int pin, int& value) override;
     std::vector<int> get_input_pins() override;
     std::map<int, int> read_all_inputs() override;
+    std::map<int, int> read_all_outputs() override;
 
 private:
     struct PinInfo {

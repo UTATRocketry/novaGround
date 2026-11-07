@@ -233,6 +233,19 @@ BOOST_AUTO_TEST_CASE(a_disabled_registry_records_and_hands_out_nothing) {
     BOOST_TEST(number(msg.at("daq_read_errors")) == 0.0);
 }
 
+BOOST_AUTO_TEST_CASE(actuator_read_errors_are_counted_and_off_when_disabled) {
+    StatsRegistry on(identity(), true);
+    BOOST_TEST(number(parse(on.take_stats_json()).at("actuator_read_errors")) == 0.0);
+    on.count_actuator_read_errors(0);
+    on.count_actuator_read_errors(2);
+    on.count_actuator_read_errors(1);
+    BOOST_TEST(number(parse(on.take_stats_json()).at("actuator_read_errors")) == 3.0);
+
+    StatsRegistry off(identity(), false);
+    off.count_actuator_read_errors(5);
+    BOOST_TEST(number(parse(off.take_stats_json()).at("actuator_read_errors")) == 0.0);
+}
+
 BOOST_AUTO_TEST_CASE(telemetry_seq_counts_up_from_one_across_threads) {
     StatsRegistry stats(identity(), true);
     BOOST_TEST(stats.next_telemetry_seq() == 1u);

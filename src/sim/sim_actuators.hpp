@@ -19,6 +19,7 @@ class SimRelayBank : public RelayBank {
 public:
     bool is_ready() const override { return true; }
     bool write_output(const std::bitset<16>& state) override;
+    bool read_output(std::bitset<16>& state) override;
 
     std::bitset<16> state() const;
     int writes() const;
@@ -34,6 +35,7 @@ public:
     bool is_ready() const override { return true; }
     void writeMicroseconds(uint8_t channel, uint16_t microseconds) override;
     bool disablePWM(uint8_t channel) override;
+    bool read_channel(uint8_t channel, PwmChannelReadback& readback) override;
 
     // 0 when the channel is off or was never written.
     uint16_t microseconds(uint8_t channel) const;
@@ -54,6 +56,7 @@ public:
     bool read(int pin, int& value) override;
     std::vector<int> get_input_pins() override;
     std::map<int, int> read_all_inputs() override;
+    std::map<int, int> read_all_outputs() override;
 
     int output_level(int pin) const;  // last value written, 0 if never written
 

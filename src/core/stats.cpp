@@ -221,6 +221,14 @@ void StatsRegistry::count_daq_read_errors(std::uint64_t n) {
     daq_read_errors_ += n;
 }
 
+void StatsRegistry::count_actuator_read_errors(std::uint64_t n) {
+    if (!enabled_ || n == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    actuator_read_errors_ += n;
+}
+
 std::string StatsRegistry::identity_json() {
     json::object root;
     root["schema"] = kSchema;
@@ -280,5 +288,6 @@ std::string StatsRegistry::take_stats_json() {
 
     root["publish_failures"] = publish_failures_;
     root["daq_read_errors"] = daq_read_errors_;
+    root["actuator_read_errors"] = actuator_read_errors_;
     return json::serialize(root);
 }

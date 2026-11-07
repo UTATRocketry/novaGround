@@ -25,6 +25,10 @@ std::string stats_info_topic(const std::string& node_id) {
     return stats_topic(node_id) + "/info";
 }
 
+std::string state_topic(const std::string& node_id) {
+    return "nova/state/" + node_id;
+}
+
 void publisher_loop(std::stop_token stop,
                     mqtt::async_client_ptr cli,
                     TelemetryStore& telemetry,
@@ -143,4 +147,29 @@ void stats_loop(std::stop_token stop,
             std::cerr << "Stats publish failed: unknown exception" << std::endl;
         }
     }
+}
+
+void state_loop(std::stop_token stop,
+                mqtt::async_client_ptr cli,
+                ActuatorSources sources,
+                StatsRegistry& stats,
+                std::string node_id,
+                int interval_ms) {
+    const std::string topic = state_topic(node_id);
+    InterruptibleSleep sleeper;
+    // Read first: the state the hardware started in is worth having too.
+    do {
+        try {
+            std::string message = actuator_state_json(sources, &stats);
+            if (cli && cli->is_connected()) {
+                // Retained, so a subscriber that arrives later gets the last
+                // state at once. `time_ms` in it says how old that is.
+                cli->publish(topic, message, 1, true)->wait();
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "State publish failed: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "State publish failed: unknown exception" << std::endl;
+        }
+    } while (!sleeper.sleep_for(stop, milliseconds(interval_ms > 0 ? interval_ms : 1000)));
 }

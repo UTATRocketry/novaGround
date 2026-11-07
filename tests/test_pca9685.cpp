@@ -1,6 +1,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 #include "drivers/servo.hpp"
@@ -137,6 +138,86 @@ BOOST_AUTO_TEST_CASE(a_failed_read_reads_as_zero_like_before) {
     start_at_50hz();
     bus.fail_reads = true;
     BOOST_TEST(pwm.readPrescale() == 0);
+}
+
+BOOST_AUTO_TEST_CASE(read_channel_gives_back_a_pulse_within_one_tick) {
+    start_at_50hz();  // prescale 121: 4.88 us per tick
+    pwm.writeMicroseconds(0, 1500);
+    PwmChannelReadback r;
+    BOOST_TEST(pwm.read_channel(0, r));
+    BOOST_TEST((r.output == PwmOutput::Pulse));
+    BOOST_TEST(r.microseconds == 1498);  // 307 ticks
+    BOOST_TEST(std::abs(static_cast<int>(r.microseconds) - 1500) <= 5);
+
+    pwm.writeMicroseconds(15, 2000);
+    BOOST_TEST(pwm.read_channel(15, r));
+    BOOST_TEST(std::abs(static_cast<int>(r.microseconds) - 2000) <= 5);
+}
+
+BOOST_AUTO_TEST_CASE(read_channel_tells_off_on_and_pulse_apart) {
+    start_at_50hz();
+    PwmChannelReadback r;
+
+    BOOST_TEST(pwm.read_channel(1, r));  // never written: the chip's reset state
+    BOOST_TEST((r.output == PwmOutput::Off));
+
+    pwm.writeMicroseconds(2, 1500);
+    BOOST_TEST(pwm.disablePWM(2));
+    BOOST_TEST(pwm.read_channel(2, r));
+    BOOST_TEST((r.output == PwmOutput::Off));
+    BOOST_TEST(r.microseconds == 0);
+
+    pwm.setPin(3, 4095);  // full on
+    BOOST_TEST(pwm.read_channel(3, r));
+    BOOST_TEST((r.output == PwmOutput::On));
+
+    pwm.setPin(3, 0);  // full off
+    BOOST_TEST(pwm.read_channel(3, r));
+    BOOST_TEST((r.output == PwmOutput::Off));
+
+    // Both full bits set: the chip treats it as off.
+    bus.registers[{kAddr, 0x0A + 1}] = 0x10;
+    bus.registers[{kAddr, 0x0A + 3}] = 0x10;
+    BOOST_TEST(pwm.read_channel(1, r));
+    BOOST_TEST((r.output == PwmOutput::Off));
+}
+
+BOOST_AUTO_TEST_CASE(read_channel_handles_a_pulse_that_wraps_the_counter) {
+    start_at_50hz();
+    pwm.setPWM(3, 3000, 500);  // 1596 ticks
+    PwmChannelReadback r;
+    BOOST_TEST(pwm.read_channel(3, r));
+    BOOST_TEST((r.output == PwmOutput::Pulse));
+    BOOST_TEST(r.microseconds == 7788);  // 1596 * 4.88
+}
+
+BOOST_AUTO_TEST_CASE(read_channel_follows_the_prescale_the_chip_holds) {
+    start_at_50hz();
+    pwm.setPWM(0, 0, 400);
+    PwmChannelReadback r;
+    BOOST_TEST(pwm.read_channel(0, r));
+    BOOST_TEST(r.microseconds == 1952);  // 400 * 4.88 at 50 Hz
+    pwm.setPWMFreq(100);                 // prescale 60: 2.44 us per tick
+    BOOST_TEST(pwm.read_channel(0, r));
+    BOOST_TEST(r.microseconds == 976);
+}
+
+BOOST_AUTO_TEST_CASE(read_channel_fails_without_writing_when_it_cannot_read) {
+    start_at_50hz();
+    pwm.writeMicroseconds(0, 1500);
+    bus.writes.clear();
+    PwmChannelReadback r;
+    r.microseconds = 42;
+
+    BOOST_TEST(!pwm.read_channel(16, r));  // the chip has channels 0 to 15
+    bus.fail_reads = true;
+    BOOST_TEST(!pwm.read_channel(0, r));
+    bus.fail_reads = false;
+    BOOST_TEST(bus.writes.empty());
+
+    Adafruit_PWMServoDriver never_started(bus);
+    BOOST_TEST(!never_started.read_channel(0, r));
+    BOOST_TEST(bus.writes.empty());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

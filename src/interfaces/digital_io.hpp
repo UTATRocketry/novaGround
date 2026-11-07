@@ -15,4 +15,8 @@ public:
     virtual bool read(int pin, int& value) = 0;
     virtual std::vector<int> get_input_pins() = 0;
     virtual std::map<int, int> read_all_inputs() = 0;
+
+    // The level each output pin is being driven to, read back from the line.
+    // Changes nothing. A pin that cannot be read is left out.
+    virtual std::map<int, int> read_all_outputs() = 0;
 };

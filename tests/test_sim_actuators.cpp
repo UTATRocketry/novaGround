@@ -61,4 +61,42 @@ BOOST_AUTO_TEST_CASE(gpio_input_listing_only_has_inputs) {
     BOOST_TEST(all.at(6) == 0);
 }
 
+BOOST_AUTO_TEST_CASE(the_relay_bank_reads_back_what_it_holds) {
+    SimRelayBank bank;
+    std::bitset<16> state;
+    BOOST_TEST(bank.read_output(state));
+    BOOST_TEST(state.none());
+    bank.write_output(std::bitset<16>(0x0F0F));
+    BOOST_TEST(bank.read_output(state));
+    BOOST_TEST(state.to_ulong() == 0x0F0Fu);
+}
+
+BOOST_AUTO_TEST_CASE(the_pwm_driver_reads_back_pulse_off_and_range) {
+    SimPwmDriver pwm;
+    PwmChannelReadback r;
+    BOOST_TEST(pwm.read_channel(3, r));  // never written
+    BOOST_TEST((r.output == PwmOutput::Off));
+    pwm.writeMicroseconds(3, 1200);
+    BOOST_TEST(pwm.read_channel(3, r));
+    BOOST_TEST((r.output == PwmOutput::Pulse));
+    BOOST_TEST(r.microseconds == 1200);
+    pwm.disablePWM(3);
+    BOOST_TEST(pwm.read_channel(3, r));
+    BOOST_TEST((r.output == PwmOutput::Off));
+    BOOST_TEST(r.microseconds == 0);
+    BOOST_TEST(!pwm.read_channel(16, r));
+}
+
+BOOST_AUTO_TEST_CASE(gpio_output_listing_only_has_outputs_and_their_levels) {
+    SimDigitalIo io(std::map<int, int>{{5, 1}});
+    io.set_direction(5, "in");
+    io.set_direction(17, "out");
+    io.set_direction(27, "out");
+    io.write(27, 1);
+    auto outputs = io.read_all_outputs();
+    BOOST_TEST(outputs.size() == 2u);
+    BOOST_TEST(outputs.at(17) == 0);  // configured, never written: low
+    BOOST_TEST(outputs.at(27) == 1);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
