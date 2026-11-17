@@ -5,18 +5,18 @@ Timing data for benchmarking and bench tests, without attaching a profiler.
 | Flag | Effect |
 |---|---|
 | `--stats <on\|off>` | `on` (also `1`, `true`, `yes`) turns everything below on. `off` (also `0`, `false`, `no`; the default) leaves it off, and nothing below happens: telemetry is exactly as before. |
-| `--stats-interval-ms <ms>` | How often the stats message is published, in whole milliseconds. Default 1000. |
+| `--stats-ms <ms>` | How often the stats message is published, in whole milliseconds. Default 1000. |
 
 On the Pi the flags come from the env file (`/etc/nova/novaGround-<env>.env`,
-written by `Nova.ps1` from `ops/nova.settings.ps1`): `start.sh` and `run.sh` turn
-`NOVA_STATS` and `NOVA_STATS_INTERVAL_MS` into `--stats` and
-`--stats-interval-ms`, passing the value as written and leaving the flag off when
-the variable is unset or empty. They come before `NOVA_EXTRA_ARGS`, so that can
-override them for one run. The binary does not read these variables itself. The
+written by `Nova.ps1` from `ops/nova.settings.ps1`, or by `nova-pi.sh configure`):
+`start.sh` and `run.sh` turn `NOVA_STATS` and `NOVA_STATS_MS` into `--stats` and
+`--stats-ms`, passing the value as written and leaving the flag off when
+the variable is unset or empty. They come before `NOVA_GLOBAL_ARGS` and
+`NOVA_EXTRA_ARGS`, so those can override them for one run. The binary does not read these variables itself. The
 per-environment defaults (on in dev, off in prod) are the ops settings' job, not
 the code's.
 
-A value the program cannot read (`--stats maybe`, `--stats-interval-ms 0` or
+A value the program cannot read (`--stats maybe`, `--stats-ms 0` or
 `1.5`, or a flag with no value) is reported on stderr and ignored: stats stay off,
 or the interval stays 1000, and the program starts. Unlike the other flags, these
 never exit with an error: a typo in a diagnostics setting must not keep the
@@ -31,7 +31,7 @@ Everything is under `nova/stats/<node>`, where `<node>` is `novaGround`,
 | Topic | Retained | Rate | Holds |
 |---|---|---|---|
 | `nova/stats/<node>/info` | yes | on every (re)connect | what this process is and how to read its stats |
-| `nova/stats/<node>` | no | every `--stats-interval-ms` | measurements only |
+| `nova/stats/<node>` | no | every `--stats-ms` | measurements only |
 
 The actuators' state, read back from the drivers, is on `nova/state/<node>` (next
 section). Telemetry (`nova/telemetry/engine`) also gains three fields, described
@@ -125,7 +125,7 @@ not what was commanded (telemetry and the logs have that), so a bench script can
 check that a restore really reached the chips. Reading writes nothing.
 
 Published retained (QoS 1) as soon as the process connects, then every
-`--stats-interval-ms`, so a subscriber that arrives later gets the last state at
+`--stats-ms`, so a subscriber that arrives later gets the last state at
 once. `time_ms` says when it was read; after the process dies the broker keeps
 the last message, so check it.
 

@@ -121,14 +121,31 @@ Only one runs at a time. Both run `start.sh`, which reads two files:
 
 | File | Holds | Written by |
 |---|---|---|
-| `/etc/nova/pi.env` | `NOVA_PI_NAME`, `NOVA_TARGET`, `NOVA_EXTRA_ARGS` | `sudo ./nova-pi.sh install --name <name> --target <binary>` |
-| `/etc/nova/novaGround-<env>.env` | `NOVA_BROKER`, `NOVA_BACKEND`, `NOVA_CONSOLE` for that environment | `Nova.ps1` on the ops PC, from `ops/nova.settings.ps1` |
+| `/etc/nova/pi.env` | `NOVA_PI_NAME`, `NOVA_TARGET`, and `NOVA_GLOBAL_ARGS` (flags for both environments) | `sudo ./nova-pi.sh install --name <name> --target <binary>`; `configure --global-args` |
+| `/etc/nova/novaGround-<env>.env` | the settings below, for that environment | `Nova.ps1` on the ops PC, from `ops/nova.settings.ps1`; or `nova-pi.sh configure` |
 
-Optional settings, in either file: `NOVA_STATS=1` turns on the telemetry
-`seq`/timestamp fields and the `nova/stats/<node>` topics, and
-`NOVA_STATS_INTERVAL_MS` sets how often the stats are published. The scripts pass
-them to the binary as `--stats` and `--stats-interval-ms`; see
-[instrumentation.md](instrumentation.md).
+The settings in `novaGround-<env>.env`. Empty or missing means the binary's own
+default (the file lists the empty ones commented out):
+
+| Setting | Flag it becomes | What it does |
+|---|---|---|
+| `NOVA_BROKER` | `--broker` | MQTT broker: `host`, `host:port` (default 1883) or a URL. Required. |
+| `NOVA_BACKEND` | `--backend` | novaOps backend: `host`, `host:port` (default 8000) or a URL. Required. |
+| `NOVA_CONSOLE` | none | Nova Console, for `status`, `report` and `deploy`: `host`, `host:port` (default 8080) or a URL. |
+| `NOVA_VERBOSITY` | `--verbosity` | 0 quiet, 1 info, 2 debug. |
+| `NOVA_SAMPLE_MS` | `--sample-ms` | DAQ sampling interval. |
+| `NOVA_PUBLISH_MS` | `--publish-ms` | Telemetry publish interval. |
+| `NOVA_STATS` | `--stats` | Runtime instrumentation, `on` or `off`. |
+| `NOVA_STATS_MS` | `--stats-ms` | How often the stats are published; see [instrumentation.md](instrumentation.md). |
+| `NOVA_SIM_SCENARIO` | none | Scenario file for the simulated hardware (novaMock); the binary reads it from its environment. |
+| `NOVA_STATE_DIR` | none | Where `last_upload.json` goes. Defaults to `/var/lib/nova/<env>`; the binary reads it from its environment. |
+| `NOVA_EXTRA_ARGS` | as written | More flags for this environment only. |
+
+`start.sh` and `run.sh` build the command line the same way (`nova-args.sh`):
+the flags from the settings, then `NOVA_GLOBAL_ARGS`, then `NOVA_EXTRA_ARGS`. The
+binary takes the last occurrence of a flag, so an environment's
+`NOVA_EXTRA_ARGS` beats `NOVA_GLOBAL_ARGS`, and both beat the individual settings.
+Values are passed on as written, and the binary reports one it can't read.
 
 Don't edit the `novaGround-<env>.env` files: `Nova.ps1` rewrites them on every
 `use`, `deploy` and `get-changes`, which is what keeps prod on prod's backend
@@ -138,6 +155,17 @@ ops PC. If the ops PC can't reach the Pi, write one by hand:
 ```bash
 sudo ./nova-pi.sh configure --env dev --broker 192.168.137.1:1883 --backend 192.168.137.1:8001
 ```
+
+`configure` takes a flag for every setting above (`--console`, `--verbosity`,
+`--sample-ms`, `--publish-ms`, `--stats`, `--stats-ms`, `--sim-scenario`,
+`--state-dir`, `--extra-args`) and changes only the ones you pass, keeping the
+rest of that environment's file. `--unset NOVA_STATS` removes one, and
+`--global-args "--verbosity 2"` sets `NOVA_GLOBAL_ARGS` in `pi.env`. It restarts
+the environment if it is running.
+
+`Nova.ps1` still writes only the broker, backend and console. Until it writes the
+rest, a `use`, `deploy` or `get-changes` rewrites the file without the other
+settings.
 
 `Nova.ps1 use dev|prod` switches the Pis along with the PC. To switch only this
 Pi, use `sudo ./nova-pi.sh use dev` (or `prod`). Manage the services with
