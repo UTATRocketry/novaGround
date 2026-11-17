@@ -50,10 +50,87 @@ teardown() { teardown_sandbox; }
   [ ! -e "$NOVA_PI_ROOT/etc/nova/novaGround-prod.env" ]
 }
 
-@test "configure needs env, broker and backend" {
+@test "configure needs env, and a broker and backend from somewhere" {
   run "$NP" configure --env dev --broker pc:1884
   [ "$status" -eq 1 ]
   [ ! -e "$NOVA_PI_ROOT/etc/nova/novaGround-dev.env" ]
+  run "$NP" configure --broker pc:1884 --backend pc:8001
+  [ "$status" -eq 1 ]
+  run "$NP" configure --env dev
+  [ "$status" -eq 1 ]
+}
+
+@test "configure can set every setting, and lists the ones it leaves empty" {
+  run "$NP" configure --env dev --broker pc:1884 --backend pc:8001 --console pc \
+    --verbosity 2 --sample-ms 20 --publish-ms 100 --stats on --stats-ms 500 \
+    --sim-scenario /srv/run.json --state-dir /srv/nova --extra-args "--publish-ms 80"
+  [ "$status" -eq 0 ]
+  f="$NOVA_PI_ROOT/etc/nova/novaGround-dev.env"
+  grep -qx 'NOVA_CONSOLE=pc' "$f"
+  grep -qx 'NOVA_VERBOSITY=2' "$f"
+  grep -qx 'NOVA_SAMPLE_MS=20' "$f"
+  grep -qx 'NOVA_PUBLISH_MS=100' "$f"
+  grep -qx 'NOVA_STATS=on' "$f"
+  grep -qx 'NOVA_STATS_MS=500' "$f"
+  grep -qx 'NOVA_SIM_SCENARIO=/srv/run.json' "$f"
+  grep -qx 'NOVA_STATE_DIR=/srv/nova' "$f"
+  grep -qx 'NOVA_EXTRA_ARGS="--publish-ms 80"' "$f"
+  run "$NP" configure --env prod --broker pc:1883 --backend pc:8000
+  grep -qx '#NOVA_STATS_MS=' "$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
+}
+
+@test "configure keeps the settings it is not given" {
+  make_installed_pi
+  run "$NP" configure --env prod --stats on --verbosity 2
+  [ "$status" -eq 0 ]
+  f="$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
+  grep -qx 'NOVA_BROKER=pc:1883' "$f"
+  grep -qx 'NOVA_BACKEND=pc:8000' "$f"
+  grep -qx 'NOVA_CONSOLE=http://pc:8090' "$f"
+  grep -qx 'NOVA_STATS=on' "$f"
+  run "$NP" configure --env prod --publish-ms 100
+  grep -qx 'NOVA_STATS=on' "$f"
+  grep -qx 'NOVA_PUBLISH_MS=100' "$f"
+}
+
+@test "configure --unset removes one setting" {
+  make_installed_pi
+  run "$NP" configure --env prod --stats on
+  run "$NP" configure --env prod --unset NOVA_STATS
+  [ "$status" -eq 0 ]
+  f="$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
+  ! grep -qx 'NOVA_STATS=on' "$f"
+  grep -qx '#NOVA_STATS=' "$f"
+  grep -qx 'NOVA_BROKER=pc:1883' "$f"
+  run "$NP" configure --env prod --unset NOVA_BOGUS
+  [ "$status" -eq 1 ]
+  run "$NP" configure --env prod --unset NOVA_BROKER
+  [ "$status" -eq 1 ]
+}
+
+@test "configure refuses a value with a double quote" {
+  make_installed_pi
+  run "$NP" configure --env prod --extra-args '--x "y"'
+  [ "$status" -eq 1 ]
+}
+
+@test "configure --global-args writes pi.env and restarts whatever is running" {
+  make_installed_pi
+  fake_active novaGround@prod.service
+  run "$NP" configure --env dev --global-args "--verbosity 2"
+  [ "$status" -eq 0 ]
+  grep -qx 'NOVA_GLOBAL_ARGS="--verbosity 2"' "$NOVA_PI_ROOT/etc/nova/pi.env"
+  grep -qx 'NOVA_TARGET=novaGround' "$NOVA_PI_ROOT/etc/nova/pi.env"
+  called "systemctl restart novaGround@prod.service"
+}
+
+@test "configure --extra-args stays in that environment's file, not pi.env" {
+  make_installed_pi
+  run "$NP" configure --env dev --extra-args "--verbosity 2"
+  [ "$status" -eq 0 ]
+  grep -qx 'NOVA_EXTRA_ARGS="--verbosity 2"' "$NOVA_PI_ROOT/etc/nova/novaGround-dev.env"
+  ! grep -q '^NOVA_EXTRA_ARGS=' "$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
+  ! grep -q 'verbosity' "$NOVA_PI_ROOT/etc/nova/pi.env"
 }
 
 @test "configure keeps the existing console URL when none is given" {
@@ -188,9 +265,26 @@ teardown() { teardown_sandbox; }
   [ -f "$NOVA_PI_ROOT/etc/systemd/system/novaGround@.service" ]
   [ -f "$NOVA_PI_ROOT/etc/systemd/system/nova-pi-report.timer" ]
   [ -x "$NOVA_PI_ROOT/usr/local/lib/nova/nova-pi.sh" ]
+  [ -f "$NOVA_PI_ROOT/usr/local/lib/nova/nova-pi-tools.py" ]
   called "systemctl enable novaGround@prod.service"
   called "systemctl disable novaGround@dev.service"
   ! called "systemctl enable novaGround@dev.service"
+}
+
+@test "install moves the old pi.env NOVA_EXTRA_ARGS to NOVA_GLOBAL_ARGS" {
+  write_etc_nova pi.env NOVA_PI_NAME=NovaGround NOVA_TARGET=novaGround 'NOVA_EXTRA_ARGS=--verbosity 2'
+  run "$NP" install
+  [ "$status" -eq 0 ]
+  grep -qx 'NOVA_GLOBAL_ARGS="--verbosity 2"' "$NOVA_PI_ROOT/etc/nova/pi.env"
+  ! grep -q '^NOVA_EXTRA_ARGS=' "$NOVA_PI_ROOT/etc/nova/pi.env"
+}
+
+@test "install keeps an existing NOVA_GLOBAL_ARGS" {
+  write_etc_nova pi.env NOVA_PI_NAME=NovaGround NOVA_TARGET=novaGround 'NOVA_GLOBAL_ARGS="--verbosity 2"'
+  run "$NP" install --name NovaPi2
+  [ "$status" -eq 0 ]
+  grep -qx 'NOVA_PI_NAME=NovaPi2' "$NOVA_PI_ROOT/etc/nova/pi.env"
+  grep -qx 'NOVA_GLOBAL_ARGS="--verbosity 2"' "$NOVA_PI_ROOT/etc/nova/pi.env"
 }
 
 @test "install rejects an unknown target" {
@@ -231,6 +325,7 @@ teardown() { teardown_sandbox; }
   [ "$status" -eq 0 ]
   [ ! -e "$NOVA_PI_ROOT/etc/systemd/system/novaGround@.service" ]
   [ ! -e "$NOVA_PI_ROOT/usr/local/lib/nova/nova-pi.sh" ]
+  [ ! -e "$NOVA_PI_ROOT/usr/local/lib/nova/nova-pi-tools.py" ]
   [ -f "$NOVA_PI_ROOT/etc/nova/pi.env" ]
 }
 
@@ -258,6 +353,27 @@ assert snap["target"] == "novaGround", snap
 assert snap["instances"]["dev"]["state"] == "active", snap
 assert snap["instances"]["prod"]["state"] != "active", snap
 PY
+}
+
+@test "status reads NOVA_CONSOLE given as just a host" {
+  python3 -c 'import pwd' 2>/dev/null || skip "needs a POSIX python3"
+  make_installed_pi
+  write_etc_nova novaGround-prod.env NOVA_BROKER=pc:1883 NOVA_BACKEND=pc:8000 NOVA_CONSOLE=pc
+  run "$NP" status --json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"console": "http://pc:8080"'* ]]
+}
+
+# ── nova-pi-tools.py ─────────────────────────────────────────────────────────
+
+@test "console-url fills in the scheme and port, like the broker and backend" {
+  python3 -c 'import pwd' 2>/dev/null || skip "needs a POSIX python3"
+  T="$REPO/nova-pi-tools.py"
+  [ "$(python3 "$T" console-url pc)" = "http://pc:8080" ]
+  [ "$(python3 "$T" console-url pc:9000)" = "http://pc:9000" ]
+  [ "$(python3 "$T" console-url http://pc:8090)" = "http://pc:8090" ]
+  [ "$(python3 "$T" console-url https://pc/)" = "https://pc" ]
+  [ -z "$(python3 "$T" console-url "")" ]
 }
 
 # ── safety: tests never escape the sandbox ───────────────────────────────────
