@@ -133,8 +133,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     }
     if (config.stop_actuate) {
         // On stderr so --verbosity 0 does not hide it.
-        std::cerr << "Actuation: STOPPED (--stop-actuate). Commands are checked, routed and timed, but no
-"
+        std::cerr << "Actuation: STOPPED (--stop-actuate). Commands are checked, routed and timed, but no\n"
                   << "output is written. Outputs are still set up at startup, as always." << std::endl;
     }
     std::cout << "Broker: " << broker_address << std::endl;
