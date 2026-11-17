@@ -10,7 +10,10 @@
 #  Usage:
 #      sudo ./nova-pi.sh install [--name NovaGround|NovaThermo] [--target novaGround|novaThermo|novaMock]
 #      sudo ./nova-pi.sh use prod|dev
-#      sudo ./nova-pi.sh configure --env prod|dev --broker <host:port> --backend <host:port> [--console <url>]
+#      sudo ./nova-pi.sh configure --env prod|dev [--broker <host[:port]>] [--backend <host[:port]>]
+#           [--console <host[:port]|url>] [--verbosity <0|1|2>] [--sample-ms <ms>] [--publish-ms <ms>]
+#           [--stats <on|off>] [--stats-ms <ms>] [--sim-scenario <file>] [--state-dir <dir>]
+#           [--extra-args "<flags>"] [--unset NOVA_<NAME>] [--global-args "<flags>"]
 #           ./nova-pi.sh build [--env prod|dev]
 #      sudo ./nova-pi.sh start | stop | restart [--env prod|dev]
 #           ./nova-pi.sh status [--json] | logs [--env prod|dev] [-f] | doctor | report
@@ -21,6 +24,13 @@
 #  There is one systemd instance per environment, like the PC's two stacks:
 #  novaGround@prod (enabled, starts on boot) and novaGround@dev (started only
 #  by `use dev`). Only one runs at a time.
+#
+#  configure changes only the settings you pass and keeps the rest of that
+#  environment's file. --unset removes one (--unset NOVA_STATS). --broker,
+#  --backend and --console take host, host:port or a full URL; a missing port
+#  gets the default. --global-args is the one setting that is not per
+#  environment: it goes in /etc/nova/pi.env and applies to both. An
+#  environment's --extra-args come after it, so they win.
 #
 #  You rarely need `use` or `configure` here: Nova.ps1 on the ops PC writes
 #  /etc/nova/novaGround-<env>.env and switches every Pi when it switches the
@@ -52,13 +62,17 @@ PI_ENV="${ENV_DIR}/pi.env"
 # What prod is running, written by `deploy`.
 DEPLOYED_FILE="${ENV_DIR}/deployed"
 STATE_ROOT="${ROOT}/var/lib/nova"
-# A copy of this script that outlives any checkout, run by the report timer.
+# A copy of this script and its Python helper that outlive any checkout, run by
+# the report timer.
 TOOL_DIR="${ROOT}/usr/local/lib/nova"
 TOOL="${TOOL_DIR}/nova-pi.sh"
 REPORT_VERSION=1
 TARGETS="novaGround novaThermo novaMock"
 
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# Status, the report and the release lookup. It sits beside this script, in the
+# checkout and in TOOL_DIR.
+PI_TOOLS="${HERE}/nova-pi-tools.py"
 
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
 step() { echo "${CYAN}==> $*${RESET}"; }
@@ -131,6 +145,10 @@ http_ok() {
   python3 -c 'import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=3)' "$1" >/dev/null 2>&1
 }
 
+# NOVA_CONSOLE as a base URL: host and host:port work like NOVA_BROKER and
+# NOVA_BACKEND (nova-pi-tools.py has the rules). Prints nothing when it's empty.
+console_url() { [[ -n "${1:-}" ]] && python3 "$PI_TOOLS" console-url "$1"; return 0; }
+
 report_now() { systemctl start --no-block "$REPORT_SERVICE" >/dev/null 2>&1 || true; }
 
 # git writes scripts with the mode it stores. Releases before
@@ -150,8 +168,14 @@ assert_checkout() {
 ACTION="${1:-}"
 shift || true
 ENVIRONMENT=""; POSITIONAL=""; TARGET=""; PI_NAME=""
-BROKER=""; BACKEND=""; CONSOLE=""; RELEASE_LABEL=""
+RELEASE_LABEL=""
 FOLLOW="false"; JSON="false"
+# What `configure` was asked to set (setting name -> value) and to remove, and
+# the new NOVA_GLOBAL_ARGS if one was given. They are not applied while parsing
+# so that a missing or bad value stops before anything is written.
+declare -A SET=()
+UNSET=()
+GLOBAL_ARGS=""; GLOBAL_ARGS_GIVEN="false"
 
 need_value() { if [[ $# -lt 2 || -z "$2" ]]; then err "$1 needs a value"; exit 1; fi; }
 
@@ -160,9 +184,19 @@ while [[ $# -gt 0 ]]; do
     --env)       need_value "$@"; ENVIRONMENT="$2"; shift 2 ;;
     --target)    need_value "$@"; TARGET="$2"; shift 2 ;;
     --name)      need_value "$@"; PI_NAME="$2"; shift 2 ;;
-    --broker)    need_value "$@"; BROKER="$2"; shift 2 ;;
-    --backend)   need_value "$@"; BACKEND="$2"; shift 2 ;;
-    --console)   need_value "$@"; CONSOLE="$2"; shift 2 ;;
+    --broker)       need_value "$@"; SET[NOVA_BROKER]="$2"; shift 2 ;;
+    --backend)      need_value "$@"; SET[NOVA_BACKEND]="$2"; shift 2 ;;
+    --console)      need_value "$@"; SET[NOVA_CONSOLE]="$2"; shift 2 ;;
+    --verbosity)    need_value "$@"; SET[NOVA_VERBOSITY]="$2"; shift 2 ;;
+    --sample-ms)    need_value "$@"; SET[NOVA_SAMPLE_MS]="$2"; shift 2 ;;
+    --publish-ms)   need_value "$@"; SET[NOVA_PUBLISH_MS]="$2"; shift 2 ;;
+    --stats)        need_value "$@"; SET[NOVA_STATS]="$2"; shift 2 ;;
+    --stats-ms)     need_value "$@"; SET[NOVA_STATS_MS]="$2"; shift 2 ;;
+    --sim-scenario) need_value "$@"; SET[NOVA_SIM_SCENARIO]="$2"; shift 2 ;;
+    --state-dir)    need_value "$@"; SET[NOVA_STATE_DIR]="$2"; shift 2 ;;
+    --extra-args)   need_value "$@"; SET[NOVA_EXTRA_ARGS]="$2"; shift 2 ;;
+    --global-args)  need_value "$@"; GLOBAL_ARGS="$2"; GLOBAL_ARGS_GIVEN="true"; shift 2 ;;
+    --unset)        need_value "$@"; UNSET+=("$2"); shift 2 ;;
     --release)   need_value "$@"; RELEASE_LABEL="$2"; shift 2 ;;
     -f|--follow) FOLLOW="true"; shift ;;
     --json)      JSON="true"; shift ;;
@@ -179,27 +213,88 @@ done
 
 [[ -z "$ENVIRONMENT" ]] || check_env "$ENVIRONMENT"
 
+# A value goes into a KEY=VALUE file that systemd and bash both read, so it
+# can't hold a double quote or a newline.
+BAD_CHARS=$'"\n'
+for k in "${!SET[@]}"; do
+  if [[ "${SET[$k]}" == *["$BAD_CHARS"]* ]]; then err "The value for $k can't contain a double quote or a newline."; exit 1; fi
+done
+if [[ "$GLOBAL_ARGS" == *["$BAD_CHARS"]* ]]; then err "--global-args can't contain a double quote or a newline."; exit 1; fi
+
 # ── settings files ───────────────────────────────────────────────────────────
 
-# write_env_file <env> <broker> <backend> <console> <where the values came from>
+# The settings an environment's file can hold, in the order they're written.
+# start.sh and run.sh turn them into flags (nova-args.sh), except
+# NOVA_SIM_SCENARIO and NOVA_STATE_DIR, which the binary reads itself.
+ENV_KEYS=(NOVA_BROKER NOVA_BACKEND NOVA_CONSOLE NOVA_VERBOSITY NOVA_SAMPLE_MS NOVA_PUBLISH_MS
+          NOVA_STATS NOVA_STATS_MS NOVA_SIM_SCENARIO NOVA_STATE_DIR NOVA_EXTRA_ARGS)
+declare -A ENV_HELP=(
+  [NOVA_BROKER]="MQTT broker on the ops PC: host or host:port (default port 1883)."
+  [NOVA_BACKEND]="novaOps backend: host or host:port (default port 8000)."
+  [NOVA_CONSOLE]="Nova Console: host, host:port (default port 8080) or a URL. Used by status, report and deploy."
+  [NOVA_VERBOSITY]="Log detail: 0 quiet, 1 info, 2 debug."
+  [NOVA_SAMPLE_MS]="DAQ sampling interval in ms."
+  [NOVA_PUBLISH_MS]="Telemetry publish interval in ms."
+  [NOVA_STATS]="Runtime instrumentation: on or off."
+  [NOVA_STATS_MS]="How often stats are published, in ms."
+  [NOVA_SIM_SCENARIO]="Scenario file for the simulated hardware (novaMock)."
+  [NOVA_STATE_DIR]="Where novaGround keeps last_upload.json (default /var/lib/nova/<env>)."
+  [NOVA_EXTRA_ARGS]="More flags for this environment only; they come after NOVA_GLOBAL_ARGS in pi.env."
+)
+
+# Setting values by name: the file being read or written.
+declare -A CFG=()
+
+# fmt_value <value>: as it is written in a file. Quoted when it has spaces, which
+# systemd and bash both accept and read_var strips again.
+fmt_value() { if [[ "$1" == *[[:space:]]* ]]; then printf '"%s"' "$1"; else printf '%s' "$1"; fi; }
+
+# load_env_file <env>: CFG <- that environment's file, every key (empty if absent).
+load_env_file() {
+  local k f; f="$(env_file "$1")"
+  CFG=()
+  for k in "${ENV_KEYS[@]}"; do CFG[$k]="$(read_var "$f" "$k")"; done
+}
+
+# write_env_file <env> <where the values came from>: the file <- CFG. A key with
+# no value is written commented out, so the file lists every setting.
 write_env_file() {
-  local f; f="$(env_file "$1")"
+  local f k; f="$(env_file "$1")"
   mkdir -p "$ENV_DIR"
-  cat > "$f" <<EOF
-# novaGround settings for the $1 environment ($5).
-# Nova.ps1 on the ops PC rewrites this file on every 'use', 'deploy' and
-# 'get-changes', from ops/nova.settings.ps1: change the settings there.
-NOVA_BROKER=$2
-NOVA_BACKEND=$3
-NOVA_CONSOLE=$4
-EOF
+  {
+    echo "# novaGround settings for the $1 environment ($2)."
+    echo "# Nova.ps1 on the ops PC rewrites this file on every 'use', 'deploy' and"
+    echo "# 'get-changes', from ops/nova.settings.ps1: change the settings there."
+    for k in "${ENV_KEYS[@]}"; do
+      echo "# ${ENV_HELP[$k]}"
+      if [[ -n "${CFG[$k]:-}" ]]; then echo "$k=$(fmt_value "${CFG[$k]}")"; else echo "#$k="; fi
+    done
+  } > "$f"
   chmod 644 "$f"
+}
+
+# write_pi_env <name> <target> <global args>
+write_pi_env() {
+  mkdir -p "$ENV_DIR"
+  {
+    echo "# Which Pi this is and which binary it runs. Written by nova-pi.sh install;"
+    echo "# change it with:  sudo ./nova-pi.sh install --name <name> --target <binary>"
+    echo "# NOVA_PI_NAME must match this Pi's name in ops/nova.settings.ps1 on the ops PC."
+    echo "NOVA_PI_NAME=$1"
+    echo "NOVA_TARGET=$2"
+    echo
+    echo "# Flags for this Pi's binary in every environment, e.g. \"--verbosity 2\"."
+    echo "# An environment's own NOVA_EXTRA_ARGS (in novaGround-<env>.env) come after"
+    echo "# these, so they win. Change it with:  sudo ./nova-pi.sh configure --env <env> --global-args \"...\""
+    if [[ -n "$3" ]]; then echo "NOVA_GLOBAL_ARGS=$(fmt_value "$3")"; else echo "#NOVA_GLOBAL_ARGS="; fi
+  } > "$PI_ENV"
+  chmod 644 "$PI_ENV"
 }
 
 # /etc/nova/pi.env: --name/--target win, then the existing file, then the old
 # single env file. Asks for the target only when there's nothing to go on.
 ensure_pi_env() {
-  local target name extra
+  local target name global
   target="${TARGET:-$(read_var "$PI_ENV" NOVA_TARGET)}"
   target="${target:-$(read_var "$LEGACY_ENV" NOVA_TARGET)}"
   if [[ -z "$target" ]]; then
@@ -212,25 +307,19 @@ ensure_pi_env() {
   # novaThermo -> NovaThermo: the name this Pi has in ops/nova.settings.ps1.
   name="${name:-${target^}}"
 
-  if [[ -f "$PI_ENV" ]]; then extra="$(read_var "$PI_ENV" NOVA_EXTRA_ARGS)"
-  else extra="$(read_var "$LEGACY_ENV" NOVA_EXTRA_ARGS)"; fi
+  # Flags used to be NOVA_EXTRA_ARGS here, for every environment. That name now
+  # belongs to the per-environment files, so the old value moves to NOVA_GLOBAL_ARGS.
+  global="$(read_var "$PI_ENV" NOVA_GLOBAL_ARGS)"
+  if [[ -z "$global" ]]; then
+    if [[ -f "$PI_ENV" ]]; then global="$(read_var "$PI_ENV" NOVA_EXTRA_ARGS)"
+    else global="$(read_var "$LEGACY_ENV" NOVA_EXTRA_ARGS)"; fi
+  fi
 
   if [[ -f "$PI_ENV" && "$(read_var "$PI_ENV" NOVA_TARGET)" == "$target" && \
-        "$(read_var "$PI_ENV" NOVA_PI_NAME)" == "$name" ]]; then
+        "$(read_var "$PI_ENV" NOVA_PI_NAME)" == "$name" ]] && ! grep -q '^NOVA_EXTRA_ARGS=' "$PI_ENV"; then
     return
   fi
-  mkdir -p "$ENV_DIR"
-  cat > "$PI_ENV" <<EOF
-# Which Pi this is and which binary it runs. Written by nova-pi.sh install;
-# change it with:  sudo ./nova-pi.sh install --name <name> --target <binary>
-# NOVA_PI_NAME must match this Pi's name in ops/nova.settings.ps1 on the ops PC.
-NOVA_PI_NAME=${name}
-NOVA_TARGET=${target}
-
-# Extra flags for this Pi's binary, e.g. "--verbosity 2 --publish-ms 100".
-NOVA_EXTRA_ARGS=${extra}
-EOF
-  chmod 644 "$PI_ENV"
+  write_pi_env "$name" "$target" "$global"
   ok "Wrote $PI_ENV (${name}, runs ${target})"
 }
 
@@ -247,8 +336,10 @@ migrate_legacy() {
   if [[ -f "$LEGACY_ENV" ]]; then
     # The old file was always prod's (the service only ever ran prod).
     if [[ ! -f "$(env_file prod)" ]]; then
-      write_env_file prod "$(read_var "$LEGACY_ENV" NOVA_BROKER)" "$(read_var "$LEGACY_ENV" NOVA_BACKEND)" "" \
-        "carried over from $LEGACY_ENV"
+      CFG=()
+      CFG[NOVA_BROKER]="$(read_var "$LEGACY_ENV" NOVA_BROKER)"
+      CFG[NOVA_BACKEND]="$(read_var "$LEGACY_ENV" NOVA_BACKEND)"
+      write_env_file prod "carried over from $LEGACY_ENV"
       ok "Carried the old broker and backend over into $(env_file prod)"
     fi
     mv "$LEGACY_ENV" "${LEGACY_ENV}.old"
@@ -259,7 +350,7 @@ migrate_legacy() {
 # Units, the report timer and the tool copy, from the checkout this runs from.
 setup_units() {
   assert_checkout
-  for f in "novaGround@.service" "$REPORT_SERVICE" "$REPORT_TIMER"; do
+  for f in "novaGround@.service" "$REPORT_SERVICE" "$REPORT_TIMER" "nova-pi-tools.py"; do
     [[ -f "${HERE}/$f" ]] || { err "${HERE} has no $f. Update this checkout first."; exit 1; }
   done
   mkdir -p "$ENV_DIR" "$STATE_ROOT" "$TOOL_DIR"
@@ -270,6 +361,7 @@ setup_units() {
   install -m 644 "${HERE}/${REPORT_SERVICE}" "${UNIT_DIR}/${REPORT_SERVICE}"
   install -m 644 "${HERE}/${REPORT_TIMER}" "${UNIT_DIR}/${REPORT_TIMER}"
   install -m 755 "${HERE}/nova-pi.sh" "$TOOL"
+  install -m 755 "$PI_TOOLS" "${TOOL_DIR}/nova-pi-tools.py"
   make_executable "$PROD_DIR"
   make_executable "$DEV_DIR"
 
@@ -278,7 +370,7 @@ setup_units() {
   systemctl enable "$(unit prod)" >/dev/null 2>&1
   systemctl disable "$(unit dev)" >/dev/null 2>&1 || true
   systemctl enable --now "$REPORT_TIMER" >/dev/null 2>&1
-  ok "Installed novaGround@.service, the report timer and $TOOL"
+  ok "Installed novaGround@.service, the report timer and $TOOL (with nova-pi-tools.py)"
 }
 
 # ── actions ──────────────────────────────────────────────────────────────────
@@ -338,17 +430,51 @@ do_install() {
 
 do_configure() {
   need_root
-  [[ -n "$ENVIRONMENT" && -n "$BROKER" && -n "$BACKEND" ]] || {
-    err "Usage: sudo $0 configure --env prod|dev --broker <host:port> --backend <host:port> [--console <url>]"
+  local usage="sudo $0 configure --env prod|dev [--broker <host[:port]>] [--backend <host[:port]>] [--console <host[:port]|url>] [--stats <on|off>] ... (see: $0 --help)"
+  if [[ -z "$ENVIRONMENT" ]]; then
+    err "Usage: $usage"
+    exit 1
+  fi
+  if [[ ${#SET[@]} -eq 0 && ${#UNSET[@]} -eq 0 && "$GLOBAL_ARGS_GIVEN" != "true" ]]; then
+    err "Nothing to change. Usage: $usage"
+    exit 1
+  fi
+
+  local k
+  load_env_file "$ENVIRONMENT"
+  for k in "${UNSET[@]}"; do
+    [[ " ${ENV_KEYS[*]} " == *" $k "* ]] || { err "--unset takes one of: ${ENV_KEYS[*]}"; exit 1; }
+    CFG[$k]=""
+  done
+  for k in "${!SET[@]}"; do CFG[$k]="${SET[$k]}"; done
+
+  # Broker and backend are the two settings start.sh refuses to run without.
+  if [[ -z "${CFG[NOVA_BROKER]}" || -z "${CFG[NOVA_BACKEND]}" ]]; then
+    err "$(env_file "$ENVIRONMENT") needs both a broker and a backend: add --broker <host[:port]> --backend <host[:port]>."
     err "Normally Nova.ps1 writes this for you ('.\\ops\\Nova.ps1 use $ENVIRONMENT' on the ops PC)."
     exit 1
-  }
-  local console="${CONSOLE:-$(read_var "$(env_file "$ENVIRONMENT")" NOVA_CONSOLE)}"
-  write_env_file "$ENVIRONMENT" "$BROKER" "$BACKEND" "$console" "written by hand with nova-pi.sh configure"
-  ok "Wrote $(env_file "$ENVIRONMENT"): backend $BACKEND"
-  if systemctl is-active --quiet "$(unit "$ENVIRONMENT")"; then
-    systemctl restart "$(unit "$ENVIRONMENT")" && ok "Restarted novaGround@$ENVIRONMENT to pick it up."
   fi
+  if [[ "$GLOBAL_ARGS_GIVEN" == "true" && ! -f "$PI_ENV" ]]; then
+    err "No $PI_ENV yet. Run: sudo $0 install"
+    exit 1
+  fi
+
+  if [[ ${#SET[@]} -gt 0 || ${#UNSET[@]} -gt 0 ]]; then
+    write_env_file "$ENVIRONMENT" "written by hand with nova-pi.sh configure"
+    ok "Wrote $(env_file "$ENVIRONMENT"): backend ${CFG[NOVA_BACKEND]}"
+  fi
+  if [[ "$GLOBAL_ARGS_GIVEN" == "true" ]]; then
+    write_pi_env "$(read_var "$PI_ENV" NOVA_PI_NAME)" "$(read_var "$PI_ENV" NOVA_TARGET)" "$GLOBAL_ARGS"
+    ok "Wrote NOVA_GLOBAL_ARGS to $PI_ENV (applies to prod and dev)"
+  fi
+
+  # NOVA_GLOBAL_ARGS reaches both environments, so restart whichever is running.
+  local e
+  for e in prod dev; do
+    if [[ "$e" == "$ENVIRONMENT" || "$GLOBAL_ARGS_GIVEN" == "true" ]] && systemctl is-active --quiet "$(unit "$e")"; then
+      systemctl restart "$(unit "$e")" && ok "Restarted novaGround@$e to pick it up."
+    fi
+  done
   report_now
 }
 
@@ -425,196 +551,7 @@ do_restart() {
 # the Nova Console (report). The console's /api/pi-report reads this format;
 # bump REPORT_VERSION if it changes incompatibly.
 snapshot() {
-  PROD_DIR="$PROD_DIR" DEV_DIR="$DEV_DIR" ENV_DIR="$ENV_DIR" PI_ENV="$PI_ENV" \
-  STATE_ROOT="$STATE_ROOT" DEPLOYED_FILE="$DEPLOYED_FILE" LEGACY_UNIT="$LEGACY_UNIT" \
-  REPORT_VERSION="$REPORT_VERSION" python3 - "$1" <<'PY'
-import json, os, pwd, socket, subprocess, sys, time, urllib.error, urllib.request
-
-mode = sys.argv[1]  # json | human | report
-E = os.environ
-DIRS = {"prod": E["PROD_DIR"], "dev": E["DEV_DIR"]}
-
-
-def run(cmd, timeout=5):
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout.strip()
-    except Exception:
-        return ""
-
-
-def read_env(path):
-    if not os.path.isfile(path):
-        return None
-    out = {}
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            out[key.strip()] = value.strip().strip('"').strip("'")
-    return out
-
-
-def read_json(path):
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:
-        return None
-
-
-def as_owner(cmd, path):
-    if os.geteuid() == 0:
-        try:
-            owner = pwd.getpwuid(os.stat(path).st_uid).pw_name
-        except Exception:
-            owner = None
-        if owner and owner != "root":
-            return ["sudo", "-u", owner] + cmd
-    return cmd
-
-
-def git(d, *args):
-    return run(["git", "-c", "safe.directory=" + d, "-C", d] + list(args))
-
-
-def health(backend):
-    """Does this environment's backend answer, seen from the Pi?"""
-    if not backend:
-        return None
-    base = backend if "://" in backend else "http://" + backend
-    try:
-        with urllib.request.urlopen(base.rstrip("/") + "/health", timeout=2) as resp:
-            return {"ok": 200 <= resp.status < 400, "detail": "HTTP %d" % resp.status}
-    except urllib.error.HTTPError as exc:
-        return {"ok": False, "detail": "HTTP %d" % exc.code}
-    except Exception as exc:
-        reason = getattr(exc, "reason", exc)
-        return {"ok": False, "detail": reason if isinstance(reason, str) else type(reason).__name__}
-
-
-pi = read_env(E["PI_ENV"]) or {}
-snap = {
-    "version": int(E["REPORT_VERSION"]),
-    "name": pi.get("NOVA_PI_NAME") or None,
-    "target": pi.get("NOVA_TARGET") or None,
-    "hostname": socket.gethostname(),
-    "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    "legacyUnit": os.path.isfile(E["LEGACY_UNIT"]),
-    "active": None,
-    "bench": None,
-    "deployed": None,
-    "instances": {},
-}
-
-for name in run(as_owner(["tmux", "list-sessions", "-F", "#S"], DIRS["prod"])).splitlines():
-    if name in ("NovaGround-dev", "NovaGround-prod"):
-        snap["bench"] = name.split("-", 1)[1]
-    elif name == "NovaGround" and not snap["bench"]:
-        snap["bench"] = "unknown"
-
-console = None
-for env, d in DIRS.items():
-    cfg = read_env(os.path.join(E["ENV_DIR"], "novaGround-%s.env" % env))
-    unit = "novaGround@%s.service" % env
-    state = run(["systemctl", "is-active", unit]) or "unknown"
-    inst = {
-        "state": state,
-        "enabled": run(["systemctl", "is-enabled", unit]) or "unknown",
-        "configured": cfg is not None,
-        "broker": (cfg or {}).get("NOVA_BROKER") or None,
-        "backend": (cfg or {}).get("NOVA_BACKEND") or None,
-        "checkout": None,
-        "built": None,
-        "lastUpload": read_json(os.path.join(E["STATE_ROOT"], env, "last_upload.json")),
-    }
-    inst["backendHealth"] = health(inst["backend"])
-    if os.path.isdir(os.path.join(d, ".git")):
-        branch = git(d, "rev-parse", "--abbrev-ref", "HEAD")
-        dirty = git(d, "status", "--porcelain", "--untracked-files=no")
-        inst["checkout"] = {
-            "dir": d,
-            "commit": git(d, "rev-parse", "HEAD") or None,
-            "branch": "(detached)" if branch == "HEAD" else (branch or None),
-            "dirty": len([l for l in dirty.splitlines() if l.strip()]),
-        }
-        if snap["target"]:
-            inst["built"] = os.access(os.path.join(d, "build", snap["target"]), os.X_OK)
-    if state == "active":
-        snap["active"] = env
-    if not console and cfg and cfg.get("NOVA_CONSOLE") and env == "prod":
-        console = cfg["NOVA_CONSOLE"]
-    snap["instances"][env] = inst
-if not console:
-    console = ((read_env(os.path.join(E["ENV_DIR"], "novaGround-dev.env")) or {}).get("NOVA_CONSOLE")) or None
-snap["console"] = console
-
-if snap["legacyUnit"] and run(["systemctl", "is-active", "novaGround.service"]) == "active":
-    snap["active"] = "legacy"
-
-deployed = read_env(E["DEPLOYED_FILE"])
-if deployed:
-    snap["deployed"] = {"release": deployed.get("release"), "commit": deployed.get("commit"),
-                        "time": deployed.get("deployed")}
-
-if mode == "json":
-    print(json.dumps(snap, indent=2))
-    sys.exit(0)
-
-if mode == "report":
-    if not snap["name"]:
-        sys.exit("no NOVA_PI_NAME in %s - run: sudo ./nova-pi.sh install" % E["PI_ENV"])
-    if not console:
-        sys.exit("no NOVA_CONSOLE in the env files yet - Nova.ps1 writes it on 'use' or 'deploy'")
-    req = urllib.request.Request(console.rstrip("/") + "/api/pi-report",
-                                 data=json.dumps(snap).encode("utf-8"),
-                                 headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        urllib.request.urlopen(req, timeout=4).read()
-    except Exception as exc:  # noqa: BLE001
-        sys.exit("could not report to %s: %s" % (console, exc))
-    sys.exit(0)
-
-# human
-G, Y, R, C, X = "\033[32m", "\033[33m", "\033[31m", "\033[36m", "\033[0m"
-print()
-print("novaGround on %s - %s (%s)" % (snap["hostname"], snap["name"] or "unnamed Pi", snap["target"] or "no target"))
-print("-" * 70)
-active = snap["active"]
-if active == "legacy":
-    print(Y + "    running      the old novaGround.service - migrate: sudo ./nova-pi.sh install" + X)
-elif active:
-    print(G + "    running      novaGround@%s" % active + X)
-else:
-    print(R + "    running      nothing" + X)
-if snap["bench"]:
-    print(Y + "    bench        a run.sh session (%s) is running" % snap["bench"] + X)
-if snap["deployed"]:
-    d = snap["deployed"]
-    print("    release      %s (%s, deployed %s)" % (d["release"], (d["commit"] or "")[:7], d["time"]))
-for env, inst in snap["instances"].items():
-    co = inst["checkout"] or {}
-    code = "%s %s" % ((co.get("commit") or "-------")[:7], co.get("branch") or "")
-    if co.get("dirty"):
-        code += " +%d uncommitted" % co["dirty"]
-    if inst["built"] is False:
-        code += " (not built)"
-    colour = G if inst["state"] == "active" else ""
-    print(colour + "    %-12s %-9s %-10s %s" % (env, inst["state"], "(" + inst["enabled"] + ")", code) + (X if colour else ""))
-    if not inst["configured"]:
-        print(Y + "                 no settings file - Nova.ps1 writes it on 'use %s'" % env + X)
-    else:
-        h = inst["backendHealth"] or {}
-        hc = G if h.get("ok") else R
-        print("                 backend %s %s%s%s" % (inst["backend"], hc, "answers" if h.get("ok") else "NO ANSWER (%s)" % h.get("detail"), X))
-    up = inst["lastUpload"]
-    if up:
-        uc = G if up.get("ok") else R
-        print("                 last upload %s %s%s%s" % (up.get("time"), uc, "OK" if up.get("ok") else "FAILED", X))
-print("    console      %s" % (console or "(not set yet)"))
-print()
-PY
+  PROD_DIR="$PROD_DIR" DEV_DIR="$DEV_DIR" ENV_DIR="$ENV_DIR" PI_ENV="$PI_ENV"   STATE_ROOT="$STATE_ROOT" DEPLOYED_FILE="$DEPLOYED_FILE" LEGACY_UNIT="$LEGACY_UNIT"   REPORT_VERSION="$REPORT_VERSION" python3 "$PI_TOOLS" snapshot "$1"
 }
 
 do_status() {
@@ -669,24 +606,12 @@ do_update() {
 resolve_release_commit() {
   # tag (or "stable") -> novaGround commit, via the Nova Console's release index.
   local which="${1:-stable}"
-  local console; console="$(read_var "$(env_file prod)" NOVA_CONSOLE)"
+  local console; console="$(console_url "$(read_var "$(env_file prod)" NOVA_CONSOLE)")"
   if [[ -z "$console" ]]; then
     echo "no NOVA_CONSOLE in $(env_file prod) to ask" >&2
     return 1
   fi
-  python3 - "$console" "$which" <<'PY'
-import json, sys, urllib.request
-console, which = sys.argv[1], sys.argv[2]
-try:
-    with urllib.request.urlopen(f"{console}/api/releases/{which}", timeout=5) as resp:
-        release = json.load(resp)
-except Exception as exc:  # noqa: BLE001
-    sys.exit(f"could not ask {console} about '{which}': {exc}")
-commit = ((release.get("pins") or {}).get("pi/novaGround") or {}).get("commit")
-if not commit:
-    sys.exit(f"release '{which}' pins no novaGround commit")
-print(release.get("tag", which), commit)
-PY
+  python3 "$PI_TOOLS" release "$console" "$which"
 }
 
 do_deploy() {
@@ -809,7 +734,7 @@ do_doctor() {
     if ping -c 1 -W 1 "${broker%%:*}" >/dev/null 2>&1; then check "ops PC reachable" true "${broker%%:*}"
     else check "ops PC reachable" false "${broker%%:*}"; fi
   fi
-  console="$(read_var "$(env_file prod)" NOVA_CONSOLE)"
+  console="$(console_url "$(read_var "$(env_file prod)" NOVA_CONSOLE)")"
   if [[ -n "$console" ]]; then
     http_ok "${console}/api/health" && check "Nova Console" true "$console" || check "Nova Console" false "$console"
   fi
@@ -829,7 +754,7 @@ do_uninstall() {
   done
   systemctl disable --now "$REPORT_TIMER" >/dev/null 2>&1
   systemctl disable --now novaGround.service >/dev/null 2>&1
-  rm -f "$TEMPLATE_UNIT" "${UNIT_DIR}/${REPORT_SERVICE}" "${UNIT_DIR}/${REPORT_TIMER}" "$LEGACY_UNIT" "$TOOL"
+  rm -f "$TEMPLATE_UNIT" "${UNIT_DIR}/${REPORT_SERVICE}" "${UNIT_DIR}/${REPORT_TIMER}" "$LEGACY_UNIT" "$TOOL" "${TOOL_DIR}/nova-pi-tools.py"
   systemctl daemon-reload
   ok "Services removed. $ENV_DIR and the repos were left in place."
 }
