@@ -15,8 +15,8 @@ accepted="$accepted"$'\n'"--help"
 # the NOVA_EXTRA_ARGS comment that nova-pi.sh writes into pi.env.
 passed="$(
   {
-    grep -h '^ARGS=(' "$ROOT/start.sh" || true
-    grep -h '^CMD=' "$ROOT/run.sh" || true
+    grep -h '^ARGS=(\|^\[\[.*ARGS+=(' "$ROOT/start.sh" || true
+    grep -h '^CMD=\|^\[\[.*STATS_ARGS+=' "$ROOT/run.sh" || true
     grep -h 'Extra flags for this Pi' "$ROOT/nova-pi.sh" || true
   } | grep -o -- '--[a-z][a-z-]*' | sort -u
 )"

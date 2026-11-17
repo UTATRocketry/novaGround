@@ -3,6 +3,7 @@
 #include <bitset>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 #include "interfaces/i2c_bus.hpp"
@@ -20,6 +21,7 @@ class TCA9535 : public RelayBank {
 
     bool configure_port(uint8_t port, uint8_t direction);
     bool write_output(const std::bitset<16>& state) override;
+    bool read_output(std::bitset<16>& state) override;
     bool read_input(uint8_t port, uint8_t& value);
 
   private:
@@ -28,6 +30,9 @@ class TCA9535 : public RelayBank {
     std::chrono::milliseconds retry_delay_;
     bool ready_ = false;
     std::string last_error_;
+    // One register transaction sequence at a time: the command thread writes
+    // the outputs while the state loop reads them back.
+    std::mutex mutex_;
 
     enum Registers {
         INPUT_PORT0 = 0x00,

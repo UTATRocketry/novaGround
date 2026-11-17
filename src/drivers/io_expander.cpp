@@ -29,6 +29,7 @@ bool TCA9535::configure_port(uint8_t port, uint8_t direction) {
         return false;
     }
     uint8_t config_reg = (port == 0) ? CONFIG_PORT0 : CONFIG_PORT1;
+    std::lock_guard<std::mutex> lock(mutex_);
     return write_register(config_reg, direction);
 }
 
@@ -38,6 +39,7 @@ bool TCA9535::write_output(const std::bitset<16>& state) {
     }
 
     uint16_t value = static_cast<uint16_t>(state.to_ulong());
+    std::lock_guard<std::mutex> lock(mutex_);
     bool ok0 = write_register(OUTPUT_PORT0, value & 0xFF);
     bool ok1 = write_register(OUTPUT_PORT1, (value >> 8) & 0xFF);
 
@@ -60,11 +62,29 @@ bool TCA9535::write_output(const std::bitset<16>& state) {
     return false;
 }
 
+bool TCA9535::read_output(std::bitset<16>& state) {
+    if (!is_ready()) {
+        return false;
+    }
+    // Reads the output registers: what the chip was last told to drive. (The
+    // input registers would give the pin levels, which this does not need.)
+    uint8_t port0 = 0;
+    uint8_t port1 = 0;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!read_register(OUTPUT_PORT0, port0) || !read_register(OUTPUT_PORT1, port1)) {
+        return false;
+    }
+    state = std::bitset<16>(static_cast<unsigned long>(port0) |
+                            (static_cast<unsigned long>(port1) << 8));
+    return true;
+}
+
 bool TCA9535::read_input(uint8_t port, uint8_t& value) {
     if (!is_ready()) {
         return false;
     }
     uint8_t input_reg = (port == 0) ? INPUT_PORT0 : INPUT_PORT1;
+    std::lock_guard<std::mutex> lock(mutex_);
     return read_register(input_reg, value);
 }
 

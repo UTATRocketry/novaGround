@@ -9,6 +9,12 @@ bool SimRelayBank::write_output(const std::bitset<16>& state) {
     return true;
 }
 
+bool SimRelayBank::read_output(std::bitset<16>& state) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    state = state_;
+    return true;
+}
+
 std::bitset<16> SimRelayBank::state() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return state_;
@@ -27,6 +33,20 @@ void SimPwmDriver::writeMicroseconds(uint8_t channel, uint16_t microseconds) {
 bool SimPwmDriver::disablePWM(uint8_t channel) {
     std::lock_guard<std::mutex> lock(mutex_);
     pulse_us_[channel] = 0;
+    return true;
+}
+
+bool SimPwmDriver::read_channel(uint8_t channel, PwmChannelReadback& readback) {
+    if (channel > 15) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pulse_us_.find(channel);
+    readback = PwmChannelReadback{};
+    if (it != pulse_us_.end() && it->second != 0) {
+        readback.output = PwmOutput::Pulse;
+        readback.microseconds = it->second;
+    }
     return true;
 }
 
@@ -88,6 +108,17 @@ std::map<int, int> SimDigitalIo::read_all_inputs() {
         if (direction != "in") continue;
         auto level = input_levels_.find(pin);
         result[pin] = level == input_levels_.end() ? 0 : level->second;
+    }
+    return result;
+}
+
+std::map<int, int> SimDigitalIo::read_all_outputs() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::map<int, int> result;
+    for (const auto& [pin, direction] : directions_) {
+        if (direction != "out") continue;
+        auto level = output_levels_.find(pin);
+        result[pin] = level == output_levels_.end() ? 0 : level->second;
     }
     return result;
 }

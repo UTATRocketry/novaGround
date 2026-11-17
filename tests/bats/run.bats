@@ -13,7 +13,7 @@ setup() {
   write_etc_nova pi.env NOVA_PI_NAME=NovaGround NOVA_TARGET=novaGround
   write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001
   write_etc_nova novaGround-prod.env NOVA_BROKER=pc:1883 NOVA_BACKEND=pc:8000
-  unset NOVA_EXTRA_ARGS NOVA_TARGET NOVA_BROKER NOVA_BACKEND
+  unset NOVA_EXTRA_ARGS NOVA_TARGET NOVA_BROKER NOVA_BACKEND NOVA_STATS NOVA_STATS_INTERVAL_MS
 }
 
 teardown() { teardown_sandbox; }
@@ -93,4 +93,24 @@ teardown() { teardown_sandbox; }
   run "$CHECKOUT/run.sh" --kill
   [ "$status" -eq 0 ]
   [[ "$output" == *"Killed session NovaGround-dev"* ]]
+}
+
+@test "turns NOVA_STATS from the env file into --stats" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_STATS=1
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  grep -q 'NOVA_STATE_DIR=/var/lib/nova/dev .*/build/novaGround --broker pc:1884 --backend pc:8001 --stats 1 ' "$CALLS"
+}
+
+@test "turns NOVA_STATS_INTERVAL_MS into --stats-interval-ms too" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_STATS=1 NOVA_STATS_INTERVAL_MS=250
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  grep -q -- '--stats 1 --stats-interval-ms 250 ' "$CALLS"
+}
+
+@test "leaves the stats flags off the command line when the settings aren't set" {
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  ! grep -q -- '--stats' "$CALLS"
 }

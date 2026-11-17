@@ -152,4 +152,74 @@ BOOST_AUTO_TEST_CASE(every_flag_in_the_usage_text_is_accepted) {
     BOOST_TEST(flags >= 6);
 }
 
+BOOST_AUTO_TEST_CASE(stats_are_off_at_1000_ms_by_default) {
+    auto r = run({});
+    BOOST_TEST(!r.result.config.stats);
+    BOOST_TEST(r.result.config.stats_interval_ms == 1000);
+}
+
+BOOST_AUTO_TEST_CASE(the_stats_flags_set_their_fields) {
+    auto r = run({"--stats", "on", "--stats-interval-ms", "250"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stats);
+    BOOST_TEST(r.result.config.stats_interval_ms == 250);
+    BOOST_TEST(r.err.empty());
+
+    // The env file's spellings work too, since the scripts pass them as written.
+    BOOST_TEST(run({"--stats", "1"}).result.config.stats);
+    BOOST_TEST(run({"--stats", "TRUE"}).result.config.stats);
+    BOOST_TEST(!run({"--stats", "0"}).result.config.stats);
+    BOOST_TEST(!run({"--stats", "off"}).result.config.stats);
+}
+
+BOOST_AUTO_TEST_CASE(a_later_stats_flag_overrides_an_earlier_one) {
+    // start.sh puts the env file's value first and NOVA_EXTRA_ARGS after it.
+    BOOST_TEST(!run({"--stats", "1", "--stats", "off"}).result.config.stats);
+    BOOST_TEST(run({"--stats-interval-ms", "100", "--stats-interval-ms", "200"})
+                   .result.config.stats_interval_ms == 200);
+}
+
+BOOST_AUTO_TEST_CASE(a_malformed_stats_value_is_reported_and_the_program_carries_on) {
+    auto r = run({"--stats", "maybe", "--broker", "pc:1"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);  // not ExitError, unlike the other flags
+    BOOST_TEST(!r.result.config.stats);
+    BOOST_TEST(r.err.find("Invalid --stats value 'maybe'") != std::string::npos);
+    BOOST_TEST(r.result.config.broker == "pc:1");  // the rest still parsed
+
+    // A bad value after a good one turns stats off rather than keeping them on.
+    auto later = run({"--stats", "on", "--stats", "2"});
+    BOOST_TEST(later.result.status == ParseStatus::Run);
+    BOOST_TEST(!later.result.config.stats);
+}
+
+BOOST_AUTO_TEST_CASE(a_malformed_interval_is_reported_and_keeps_the_previous_value) {
+    for (const char* bad : {"0", "-5", "1.5", "abc", "10ms"}) {
+        auto r = run({"--stats-interval-ms", bad});
+        BOOST_TEST_CONTEXT(bad) {
+            BOOST_TEST(r.result.status == ParseStatus::Run);
+            BOOST_TEST(r.result.config.stats_interval_ms == 1000);
+            BOOST_TEST(r.err.find("Invalid --stats-interval-ms value") != std::string::npos);
+        }
+    }
+    auto r = run({"--stats-interval-ms", "300", "--stats-interval-ms", "nope"});
+    BOOST_TEST(r.result.config.stats_interval_ms == 300);
+}
+
+BOOST_AUTO_TEST_CASE(a_stats_flag_missing_its_value_is_reported_and_ignored) {
+    auto a = run({"--stats"});
+    BOOST_TEST(a.result.status == ParseStatus::Run);
+    BOOST_TEST(!a.result.config.stats);
+    BOOST_TEST(a.err.find("--stats needs a value") != std::string::npos);
+    auto b = run({"--stats-interval-ms"});
+    BOOST_TEST(b.result.status == ParseStatus::Run);
+    BOOST_TEST(b.result.config.stats_interval_ms == 1000);
+    BOOST_TEST(b.err.find("--stats-interval-ms needs a value") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(the_usage_lists_the_stats_flags) {
+    auto r = run({"--help"});
+    BOOST_TEST(r.out.find("--stats <on|off>") != std::string::npos);
+    BOOST_TEST(r.out.find("--stats-interval-ms <ms>") != std::string::npos);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

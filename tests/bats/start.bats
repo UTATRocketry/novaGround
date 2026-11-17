@@ -12,7 +12,7 @@ setup() {
   printf '#!/usr/bin/env bash\necho "BINARY ran with: $*"\n' > "$CHECKOUT/build/novaGround"
   chmod +x "$CHECKOUT/start.sh" "$CHECKOUT/build/novaGround"
   export NOVA_ENV=dev NOVA_TARGET=novaGround NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001
-  unset NOVA_EXTRA_ARGS
+  unset NOVA_EXTRA_ARGS NOVA_STATS NOVA_STATS_INTERVAL_MS
 }
 
 teardown() { teardown_sandbox; }
@@ -27,6 +27,30 @@ teardown() { teardown_sandbox; }
   NOVA_EXTRA_ARGS="--verbosity 2 --publish-ms 100" run "$CHECKOUT/start.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"--backend pc:8001 --verbosity 2 --publish-ms 100"* ]]
+}
+
+@test "NOVA_STATS and NOVA_STATS_INTERVAL_MS become flags, as written" {
+  NOVA_STATS=1 NOVA_STATS_INTERVAL_MS=250 run "$CHECKOUT/start.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--backend pc:8001 --stats 1 --stats-interval-ms 250"* ]]
+}
+
+@test "a stats value is passed through even if it is wrong; the binary reports it" {
+  NOVA_STATS=maybe run "$CHECKOUT/start.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--stats maybe"* ]]
+}
+
+@test "no stats flags when the stats settings are unset or empty" {
+  NOVA_STATS= run "$CHECKOUT/start.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"--stats"* ]]
+}
+
+@test "NOVA_EXTRA_ARGS comes after the stats flags, so it can override them" {
+  NOVA_STATS=1 NOVA_EXTRA_ARGS="--stats off" run "$CHECKOUT/start.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--stats 1 --stats off"* ]]
 }
 
 @test "exit 78 when NOVA_ENV is missing or not prod/dev" {

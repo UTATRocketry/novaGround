@@ -24,6 +24,7 @@ public:
         calls.push_back("off:" + std::to_string(ch));
         return true;
     }
+    bool read_channel(uint8_t, PwmChannelReadback&) override { return false; }
 };
 
 json::object cmd(const char* text) {

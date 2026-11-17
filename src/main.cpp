@@ -15,8 +15,10 @@
 #include "controllers/relay_controller.hpp"
 #include "controllers/sampler.hpp"
 #include "controllers/servo_controller.hpp"
+#include "core/actuator_state.hpp"
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
+#include "core/stats.hpp"
 #include "core/telemetry.hpp"
 #include "interfaces/hardware.hpp"
 #include "utils/cli.hpp"
@@ -55,6 +57,8 @@ struct App {
     RuntimeConfig config;
     std::string upload_url;
     TelemetryStore telemetry;
+    // Declared before the controllers and router that report into it.
+    std::unique_ptr<StatsRegistry> stats;
 
     std::vector<unsigned int> output_pins = {17, 27, 22};
     std::vector<unsigned int> input_pins = {5, 6};
@@ -100,6 +104,24 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     const char* nova_env = std::getenv("NOVA_ENV");
     std::cout << "Build ID: " << config.node_id
               << "  environment: " << (nova_env && *nova_env ? nova_env : "(not set)") << std::endl;
+
+    // --stats and --stats-interval-ms were read (and any bad value reported and
+    // ignored) by parse_args.
+    const bool stats_on = config.stats;
+    const int stats_interval_ms = config.stats_interval_ms;
+    StatsIdentity identity;
+    identity.node = config.node_id;
+    identity.build_id = NOVA_BUILD_ID;
+    identity.interval_ms = stats_interval_ms;
+    app->stats = std::make_unique<StatsRegistry>(std::move(identity), stats_on);
+    if (stats_on) {
+        std::cout << "Stats: on, every " << stats_interval_ms << " ms to " << stats_topic(config.node_id)
+                  << " (identity, retained, on " << stats_info_topic(config.node_id)
+                  << "); actuator state, retained, on " << state_topic(config.node_id)
+                  << "; seq and timestamps in telemetry" << std::endl;
+    } else {
+        std::cout << "Stats: off" << std::endl;
+    }
     std::cout << "Broker: " << broker_address << std::endl;
     std::cout << "Backend: " << backend_base << "  (uploads to " << app->upload_url << ")" << std::endl;
     check_backend(backend_base);
@@ -131,6 +153,16 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
         }
     }
 
+    // Register every loop now: the retained info message, published on connect,
+    // lists them with their configured periods. (No-ops when stats are off.)
+    app->stats->loop("publisher", config.publish_interval_ms);
+    if (!hw.daq_hats.empty()) {
+        app->stats->loop("sampler", config.sample_interval_ms);
+    }
+    if (hw.gpio) {
+        app->stats->loop("gpio_sampler", kGpioSampleIntervalMs);
+    }
+
     app->servo_controller = std::make_unique<ServoController>(hw.servo.get(), &app->telemetry, app->logger.get());
     app->relay_controller = std::make_unique<RelayController>(hw.relays.get(), &app->telemetry, app->logger.get());
     if (hw.relays) {
@@ -140,6 +172,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     app->data_file_controller = std::make_unique<DataFileController>(app->logger.get(), app->upload_url);
 
     app->router = std::make_unique<CommandRouter>(kCommandSourceId);
+    app->router->set_stats(app->stats.get());
     ServoController* servo = app->servo_controller.get();
     RelayController* relay = app->relay_controller.get();
     GpioController* gpio = app->gpio_controller.get();
@@ -168,9 +201,17 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     {
         auto topics = mqtt::string_collection::create({kCommandTopic});
         const std::vector<int> qos{1};
-        cli->set_connected_handler([cli, topics, qos](const std::string& /*cause*/) {
+        StatsRegistry* stats = app->stats.get();
+        const std::string node_id = config.node_id;
+        cli->set_connected_handler([cli, topics, qos, stats, node_id](const std::string& /*cause*/) {
             cli->subscribe(topics, qos);
             std::cout << "Subscribed to " << kCommandTopic << std::endl;
+            // Retained, so the broker keeps it for late subscribers; sent on
+            // every (re)connect in case a broker restart dropped it. Not waited
+            // on: this runs on the client's own callback thread.
+            if (stats->enabled()) {
+                cli->publish(stats_info_topic(node_id), stats->identity_json(), 1, true);
+            }
         });
     }
 
@@ -211,7 +252,8 @@ void run(App& app, std::stop_token stop) {
                          app.cli,
                          std::ref(app.telemetry),
                          app.config.node_id,
-                         app.config.publish_interval_ms);
+                         app.config.publish_interval_ms,
+                         app.stats.get());
 
     if (!hw.daq_hats.empty()) {
         threads.emplace_back(daq_sample_loop,
@@ -219,17 +261,39 @@ void run(App& app, std::stop_token stop) {
                              hw.daq_hats,
                              std::ref(app.telemetry),
                              app.logger.get(),
-                             app.config.sample_interval_ms);
+                             app.config.sample_interval_ms,
+                             app.stats.get());
     }
 
     if (hw.gpio) {
         threads.emplace_back(gpio_sample_loop,
                              std::ref(*hw.gpio),
                              std::ref(app.telemetry),
-                             kGpioSampleIntervalMs);
+                             kGpioSampleIntervalMs,
+                             app.stats.get());
     }
 
     threads.emplace_back(consumer_loop, app.cli, std::ref(*app.router));
+
+    if (app.stats->enabled()) {
+        threads.emplace_back(stats_loop,
+                             app.cli,
+                             std::ref(*app.stats),
+                             app.config.node_id,
+                             app.stats->identity().interval_ms);
+
+        // Read-only: reads the chips' registers and the GPIO lines, writes none.
+        ActuatorSources sources;
+        sources.relays = hw.relays.get();
+        sources.servo = hw.servo.get();
+        sources.gpio = hw.gpio.get();
+        threads.emplace_back(state_loop,
+                             app.cli,
+                             sources,
+                             std::ref(*app.stats),
+                             app.config.node_id,
+                             app.stats->identity().interval_ms);
+    }
 
     InterruptibleSleep sleeper;
     while (!sleeper.sleep_for(stop, seconds(1))) {

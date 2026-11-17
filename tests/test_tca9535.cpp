@@ -113,4 +113,43 @@ BOOST_AUTO_TEST_CASE(read_input_reads_the_input_ports) {
     BOOST_TEST(!chip.read_input(0, v));
 }
 
+BOOST_AUTO_TEST_CASE(read_output_gives_back_what_write_output_wrote) {
+    FakeI2cBus bus;
+    TCA9535 chip(bus, kAddr, kNoDelay);
+    BOOST_REQUIRE(chip.write_output(std::bitset<16>(0xA50F)));
+    bus.writes.clear();
+
+    std::bitset<16> state;
+    BOOST_TEST(chip.read_output(state));
+    BOOST_TEST(state.to_ulong() == 0xA50Fu);
+    BOOST_TEST(bus.writes.empty());  // a read-back writes nothing
+}
+
+BOOST_AUTO_TEST_CASE(read_output_reads_the_output_registers_not_the_inputs) {
+    FakeI2cBus bus;
+    TCA9535 chip(bus, kAddr, kNoDelay);
+    bus.registers[{kAddr, 0x00}] = 0xFF;  // input ports: the pin levels
+    bus.registers[{kAddr, 0x01}] = 0xFF;
+    bus.registers[{kAddr, 0x02}] = 0x01;  // output ports: relays 0-7, 8-15
+    bus.registers[{kAddr, 0x03}] = 0x80;
+    std::bitset<16> state;
+    BOOST_TEST(chip.read_output(state));
+    BOOST_TEST(state.to_ulong() == 0x8001u);
+}
+
+BOOST_AUTO_TEST_CASE(read_output_fails_when_a_read_fails_or_the_chip_is_not_ready) {
+    FakeI2cBus bus;
+    TCA9535 chip(bus, kAddr, kNoDelay);
+    std::bitset<16> state(0x1234);
+    bus.fail_reads = true;
+    BOOST_TEST(!chip.read_output(state));
+    BOOST_TEST(state.to_ulong() == 0x1234u);  // left alone
+
+    FakeI2cBus no_addr;
+    no_addr.attach_ok = false;
+    TCA9535 not_ready(no_addr, kAddr, kNoDelay);
+    BOOST_TEST(!not_ready.read_output(state));
+    BOOST_TEST(no_addr.writes.empty());
+}
+
 BOOST_AUTO_TEST_SUITE_END()

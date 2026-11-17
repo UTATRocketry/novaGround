@@ -2,6 +2,8 @@
 
 #include <ostream>
 
+#include "core/stats.hpp"
+
 bool parse_int(const std::string& text, int& value) {
     try {
         size_t idx = 0;
@@ -54,6 +56,8 @@ void print_usage(std::ostream& out, const char* exe_name) {
         << "  --verbosity <0|1|2>                 0=quiet,1=info,2=debug\n"
         << "  --sample-ms <ms>                    DAQ sampling interval\n"
         << "  --publish-ms <ms>                   Telemetry publish interval\n"
+        << "  --stats <on|off>                    Runtime instrumentation (default off)\n"
+        << "  --stats-interval-ms <ms>            How often stats are published (default 1000)\n"
         << "  --help                              Show this message\n";
 }
 
@@ -112,6 +116,35 @@ ParseResult parse_args(const std::vector<std::string>& args,
                 return fail();
             }
             config.publish_interval_ms = value;
+            continue;
+        }
+        // The two instrumentation flags never stop the program: a value that
+        // cannot be read is reported and ignored, so a typo in a diagnostics
+        // setting cannot keep the valves from being commanded.
+        if (arg == "--stats") {
+            if (!has_value) {
+                err << "--stats needs a value (on or off); stats are off.\n";
+                config.stats = false;
+                continue;
+            }
+            const std::string& value = args[++i];
+            if (!parse_stats_setting(value.c_str(), config.stats)) {
+                err << "Invalid --stats value '" << value
+                    << "' (use on or off, 1/0, true/false, yes/no); stats are off.\n";
+            }
+            continue;
+        }
+        if (arg == "--stats-interval-ms") {
+            if (!has_value) {
+                err << "--stats-interval-ms needs a value; using " << config.stats_interval_ms << ".\n";
+                continue;
+            }
+            const std::string& value = args[++i];
+            if (!parse_stats_interval(value.c_str(), config.stats_interval_ms)) {
+                err << "Invalid --stats-interval-ms value '" << value
+                    << "' (a whole number of milliseconds, 1 or more); using " << config.stats_interval_ms
+                    << ".\n";
+            }
             continue;
         }
         err << "Unknown option: " << arg << "\n";

@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -85,6 +86,7 @@ class Adafruit_PWMServoDriver : public PwmDriver {
     uint8_t readPrescale();
     void writeMicroseconds(uint8_t num, uint16_t Microseconds) override;
     bool disablePWM(uint8_t num) override;
+    bool read_channel(uint8_t num, PwmChannelReadback& readback) override;
 
     void setOscillatorFrequency(uint32_t freq);
     uint32_t getOscillatorFrequency();
@@ -95,6 +97,9 @@ class Adafruit_PWMServoDriver : public PwmDriver {
     bool begun_ = false;
     uint32_t _oscillator_freq = FREQUENCY_OSCILLATOR;
     bool warned_not_ready_ = false;
+    // A channel's four registers are written, or read back, as one unit: the
+    // command thread writes pulses while the state loop reads them.
+    std::mutex channel_mutex_;
 
     uint8_t read8(uint8_t addr);
     void write8(uint8_t addr, uint8_t d);

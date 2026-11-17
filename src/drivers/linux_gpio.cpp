@@ -111,3 +111,21 @@ std::map<int, int> LinuxGpio::read_all_inputs() {
     }
     return result;
 }
+
+std::map<int, int> LinuxGpio::read_all_outputs() {
+    std::map<int, int> result;
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [pin, info] : pins_) {
+        if (info.direction == "out") {
+            // For a line requested as an output this returns the level it is
+            // being driven to; it does not change it.
+            int val = gpiod_line_get_value(info.line);
+            if (val < 0) {
+                std::cerr << "Failed to read back GPIO " << pin << "\n";
+                continue;
+            }
+            result[pin] = val;
+        }
+    }
+    return result;
+}

@@ -98,7 +98,14 @@ for e in prod dev; do
   fi
 done
 
-CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${BIN} --broker ${BROKER} --backend ${BACKEND} ${NOVA_EXTRA_ARGS:-}"
+# NOVA_STATS and NOVA_STATS_INTERVAL_MS (runtime instrumentation) from the env
+# file become flags, passed on as written: the binary reports a value it cannot
+# read and carries on. Before NOVA_EXTRA_ARGS, so that can override them.
+STATS_ARGS=""
+[[ -n "${NOVA_STATS:-}" ]] && STATS_ARGS+="--stats $(printf '%q' "$NOVA_STATS") "
+[[ -n "${NOVA_STATS_INTERVAL_MS:-}" ]] && STATS_ARGS+="--stats-interval-ms $(printf '%q' "$NOVA_STATS_INTERVAL_MS") "
+
+CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${BIN} --broker ${BROKER} --backend ${BACKEND} ${STATS_ARGS}${NOVA_EXTRA_ARGS:-}"
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   tmux new-session -d -s "$SESSION"

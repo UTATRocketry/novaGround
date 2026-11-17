@@ -45,4 +45,12 @@ public:
         for (int pin : get_input_pins()) out[pin] = levels[pin];
         return out;
     }
+    std::map<int, int> read_all_outputs() override {
+        if (throw_on_read_all) throw std::runtime_error("fake gpio failure");
+        std::map<int, int> out;
+        for (const auto& [pin, dir] : directions) {
+            if (dir == "out") out[pin] = levels[pin];
+        }
+        return out;
+    }
 };

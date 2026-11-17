@@ -23,6 +23,11 @@ public:
         writes.push_back(state);
         return write_ok;
     }
+    bool read_output(std::bitset<16>& state) override {
+        if (writes.empty()) return false;
+        state = writes.back();
+        return true;
+    }
 };
 
 json::object cmd(const char* text) {

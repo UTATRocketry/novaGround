@@ -2,6 +2,8 @@
 
 #include <iostream>
 
+#include "stats.hpp"
+
 namespace json = boost::json;
 
 CommandRouter::CommandRouter(std::string expected_source)
@@ -11,7 +13,8 @@ void CommandRouter::register_handler(const std::string& type, Handler handler) {
     handlers_[type] = std::move(handler);
 }
 
-void CommandRouter::handle_message(const std::string& payload) {
+void CommandRouter::handle_message(const std::string& payload,
+                                   std::chrono::steady_clock::time_point received) {
     boost::system::error_code ec;
     json::value parsed = json::parse(payload, ec);
     if (ec) {
@@ -58,10 +61,11 @@ void CommandRouter::handle_message(const std::string& payload) {
         return;
     }
 
-    handle_command_object(cmd_obj);
+    handle_command_object(cmd_obj, received);
 }
 
-void CommandRouter::handle_command_object(const json::object& cmd) {
+void CommandRouter::handle_command_object(const json::object& cmd,
+                                          std::chrono::steady_clock::time_point received) {
     auto type_it = cmd.if_contains("type");
     if (!type_it || !type_it->is_string()) {
         std::cerr << "Command missing type string." << "\n";
@@ -75,11 +79,20 @@ void CommandRouter::handle_command_object(const json::object& cmd) {
         return;
     }
 
+    // The handler runs on this thread and returns after the driver write, so
+    // "done" is the write finishing.
+    const auto handling = std::chrono::steady_clock::now();
     try {
         handler_it->second(cmd);
     } catch (const std::exception& e) {
         std::cerr << "Command handler error: " << e.what() << "\n";
     } catch (...) {
         std::cerr << "Command handler error: unknown exception" << "\n";
+    }
+
+    if (stats_) {
+        const auto done = std::chrono::steady_clock::now();
+        using ms = std::chrono::duration<double, std::milli>;
+        stats_->record_command(type, ms(handling - received).count(), ms(done - received).count());
     }
 }
