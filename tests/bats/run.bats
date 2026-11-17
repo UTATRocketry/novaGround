@@ -7,13 +7,13 @@ setup() {
   setup_sandbox
   CHECKOUT="$SANDBOX/checkout"
   mkdir -p "$CHECKOUT/build"
-  cp "$REPO/run.sh" "$CHECKOUT/run.sh"
+  cp "$REPO/run.sh" "$REPO/nova-args.sh" "$CHECKOUT/"
   printf '#!/usr/bin/env bash\n' > "$CHECKOUT/build/novaGround"
   chmod +x "$CHECKOUT/run.sh" "$CHECKOUT/build/novaGround"
   write_etc_nova pi.env NOVA_PI_NAME=NovaGround NOVA_TARGET=novaGround
   write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001
   write_etc_nova novaGround-prod.env NOVA_BROKER=pc:1883 NOVA_BACKEND=pc:8000
-  unset NOVA_EXTRA_ARGS NOVA_TARGET NOVA_BROKER NOVA_BACKEND NOVA_STATS NOVA_STATS_INTERVAL_MS
+  unset NOVA_EXTRA_ARGS NOVA_GLOBAL_ARGS NOVA_VERBOSITY NOVA_SAMPLE_MS NOVA_PUBLISH_MS NOVA_STATS NOVA_STATS_MS NOVA_SIM_SCENARIO NOVA_STATE_DIR NOVA_TARGET NOVA_BROKER NOVA_BACKEND
 }
 
 teardown() { teardown_sandbox; }
@@ -102,15 +102,37 @@ teardown() { teardown_sandbox; }
   grep -q 'NOVA_STATE_DIR=/var/lib/nova/dev .*/build/novaGround --broker pc:1884 --backend pc:8001 --stats 1 ' "$CALLS"
 }
 
-@test "turns NOVA_STATS_INTERVAL_MS into --stats-interval-ms too" {
-  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_STATS=1 NOVA_STATS_INTERVAL_MS=250
+@test "turns NOVA_STATS_MS into --stats-ms too" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_STATS=1 NOVA_STATS_MS=250
   run "$CHECKOUT/run.sh"
   [ "$status" -eq 0 ]
-  grep -q -- '--stats 1 --stats-interval-ms 250 ' "$CALLS"
+  grep -q -- '--stats 1 --stats-ms 250 ' "$CALLS"
 }
 
 @test "leaves the stats flags off the command line when the settings aren't set" {
   run "$CHECKOUT/run.sh"
   [ "$status" -eq 0 ]
   ! grep -q -- '--stats' "$CALLS"
+}
+
+@test "turns NOVA_VERBOSITY, NOVA_SAMPLE_MS and NOVA_PUBLISH_MS into flags" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_VERBOSITY=2 NOVA_SAMPLE_MS=20 NOVA_PUBLISH_MS=100
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  grep -q -- '--verbosity 2 --sample-ms 20 --publish-ms 100 ' "$CALLS"
+}
+
+@test "NOVA_GLOBAL_ARGS from pi.env comes before the environment's NOVA_EXTRA_ARGS" {
+  write_etc_nova pi.env NOVA_PI_NAME=NovaGround NOVA_TARGET=novaGround 'NOVA_GLOBAL_ARGS="--verbosity 1"'
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 'NOVA_EXTRA_ARGS="--verbosity 2"'
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  grep -q -- '--verbosity 1 --verbosity 2 ' "$CALLS"
+}
+
+@test "NOVA_STATE_DIR and NOVA_SIM_SCENARIO from the env file reach the binary's command line" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_STATE_DIR=/srv/nova NOVA_SIM_SCENARIO=/srv/run.json
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 0 ]
+  grep -q 'NOVA_ENV=dev NOVA_STATE_DIR=/srv/nova NOVA_SIM_SCENARIO=/srv/run.json .*/build/novaGround ' "$CALLS"
 }

@@ -8,7 +8,7 @@
 # which is what Type=simple expects.
 #
 # All settings come from the environment, which the unit loads from
-# /etc/nova/pi.env and /etc/nova/novaGround-<env>.env. There are no default
+# /etc/nova/pi.env and /etc/nova/novaGround-<env>.env (nova-args.sh lists them). There are no default
 # addresses here on purpose: a guessed backend is how prod data ended up on
 # the dev port (issue #29).
 #
@@ -46,16 +46,14 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
-ARGS=(--broker "$NOVA_BROKER" --backend "$NOVA_BACKEND")
+# shellcheck source=nova-args.sh
+source "${HERE}/nova-args.sh"
+build_args "$NOVA_BROKER" "$NOVA_BACKEND"
 
-# Runtime instrumentation, passed on as written: the binary reports a value it
-# cannot read and carries on. Before NOVA_EXTRA_ARGS, so that can override them.
-[[ -n "${NOVA_STATS:-}" ]] && ARGS+=(--stats "$NOVA_STATS")
-[[ -n "${NOVA_STATS_INTERVAL_MS:-}" ]] && ARGS+=(--stats-interval-ms "$NOVA_STATS_INTERVAL_MS")
-
-# Word-splitting is intended here so NOVA_EXTRA_ARGS can carry several flags.
-# shellcheck disable=SC2206
-[[ -n "${NOVA_EXTRA_ARGS:-}" ]] && ARGS+=($NOVA_EXTRA_ARGS)
+# The binary reads these from its environment. The unit sets NOVA_STATE_DIR to
+# this environment's folder; the env file can override it.
+export NOVA_STATE_DIR="${NOVA_STATE_DIR:-/var/lib/nova/${ENVIRONMENT}}"
+[[ -n "${NOVA_SIM_SCENARIO:-}" ]] && export NOVA_SIM_SCENARIO
 
 echo "novaGround (${ENVIRONMENT}): exec $BIN ${ARGS[*]}"
 exec "$BIN" "${ARGS[@]}"

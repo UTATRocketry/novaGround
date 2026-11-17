@@ -11,13 +11,13 @@ accepted="$(grep -ho '^ *<< "  --[a-z][a-z-]*' "$ROOT/src/utils/cli.cpp" | grep 
 accepted="$accepted"$'\n'"--help"
 [[ "$(wc -l <<<"$accepted")" -ge 6 ]] || { echo "could not read the accepted flags from cli.cpp" >&2; exit 2; }
 
-# Flags the scripts put on the binary's command line, plus the example in
-# the NOVA_EXTRA_ARGS comment that nova-pi.sh writes into pi.env.
+# Flags the scripts put on the binary's command line (nova-args.sh builds it for
+# start.sh and run.sh), plus the example in the NOVA_GLOBAL_ARGS comment that
+# nova-pi.sh writes into pi.env.
 passed="$(
   {
-    grep -h '^ARGS=(\|^\[\[.*ARGS+=(' "$ROOT/start.sh" || true
-    grep -h '^CMD=\|^\[\[.*STATS_ARGS+=' "$ROOT/run.sh" || true
-    grep -h 'Extra flags for this Pi' "$ROOT/nova-pi.sh" || true
+    grep -h '^ *ARGS=(\|ARGS+=(' "$ROOT/nova-args.sh" || true
+    grep -h 'Flags for this Pi' "$ROOT/nova-pi.sh" || true
   } | grep -o -- '--[a-z][a-z-]*' | sort -u
 )"
 [[ -n "$passed" ]] || { echo "found no binary flags in the scripts; the patterns need updating" >&2; exit 2; }

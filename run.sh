@@ -98,14 +98,18 @@ for e in prod dev; do
   fi
 done
 
-# NOVA_STATS and NOVA_STATS_INTERVAL_MS (runtime instrumentation) from the env
-# file become flags, passed on as written: the binary reports a value it cannot
-# read and carries on. Before NOVA_EXTRA_ARGS, so that can override them.
-STATS_ARGS=""
-[[ -n "${NOVA_STATS:-}" ]] && STATS_ARGS+="--stats $(printf '%q' "$NOVA_STATS") "
-[[ -n "${NOVA_STATS_INTERVAL_MS:-}" ]] && STATS_ARGS+="--stats-interval-ms $(printf '%q' "$NOVA_STATS_INTERVAL_MS") "
+# The same flags the service passes (nova-args.sh); --broker and --backend
+# above win over the env file for this one run.
+# shellcheck source=nova-args.sh
+source "${HERE}/nova-args.sh"
+build_args "$BROKER" "$BACKEND"
+printf -v ARGS_TEXT '%q ' "${ARGS[@]}"
 
-CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${BIN} --broker ${BROKER} --backend ${BACKEND} ${STATS_ARGS}${NOVA_EXTRA_ARGS:-}"
+# The binary reads these from its environment, and tmux starts a fresh shell,
+# so they go on the command line.
+ENV_TEXT="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=${NOVA_STATE_DIR:-/var/lib/nova/${ENVIRONMENT}}"
+[[ -n "${NOVA_SIM_SCENARIO:-}" ]] && printf -v ENV_TEXT '%s NOVA_SIM_SCENARIO=%q' "$ENV_TEXT" "$NOVA_SIM_SCENARIO"
+CMD="${ENV_TEXT} ${BIN} ${ARGS_TEXT}"
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   tmux new-session -d -s "$SESSION"
