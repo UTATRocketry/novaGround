@@ -18,7 +18,7 @@
 //   nova/stats/<node>/info  retained; what this process is and how it measures
 //                           (identity_json). Rarely changes, so a late
 //                           subscriber needs it once.
-//   nova/stats/<node>       not retained; one interval (--stats-interval-ms) of
+//   nova/stats/<node>       not retained; one interval (--stats-ms) of
 //                           measurements only (take_stats_json).
 //
 // Intervals are measured with steady_clock. Only timestamps that leave the
@@ -30,7 +30,7 @@
 // the program, so the caller warns and carries on.
 bool parse_stats_setting(const char* value, bool& enabled);
 
-// The --stats-interval-ms value: a whole number of milliseconds, 1 or more.
+// The --stats-ms value: a whole number of milliseconds, 1 or more.
 // Empty (or null) leaves `interval_ms` as it was (the caller's default) and
 // returns true. Returns false for anything else (letters, fractions, zero,
 // negative, trailing text, out of range), also leaving it unchanged.

@@ -57,7 +57,7 @@ void print_usage(std::ostream& out, const char* exe_name) {
         << "  --sample-ms <ms>                    DAQ sampling interval\n"
         << "  --publish-ms <ms>                   Telemetry publish interval\n"
         << "  --stats <on|off>                    Runtime instrumentation (default off)\n"
-        << "  --stats-interval-ms <ms>            How often stats are published (default 1000)\n"
+        << "  --stats-ms <ms>                     How often stats are published (default 1000)\n"
         << "  --help                              Show this message\n";
 }
 
@@ -134,14 +134,14 @@ ParseResult parse_args(const std::vector<std::string>& args,
             }
             continue;
         }
-        if (arg == "--stats-interval-ms") {
+        if (arg == "--stats-ms") {
             if (!has_value) {
-                err << "--stats-interval-ms needs a value; using " << config.stats_interval_ms << ".\n";
+                err << "--stats-ms needs a value; using " << config.stats_interval_ms << ".\n";
                 continue;
             }
             const std::string& value = args[++i];
             if (!parse_stats_interval(value.c_str(), config.stats_interval_ms)) {
-                err << "Invalid --stats-interval-ms value '" << value
+                err << "Invalid --stats-ms value '" << value
                     << "' (a whole number of milliseconds, 1 or more); using " << config.stats_interval_ms
                     << ".\n";
             }

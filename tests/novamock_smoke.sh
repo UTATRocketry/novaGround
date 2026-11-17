@@ -46,7 +46,7 @@ NOVA_ENV=dev \
 NOVA_STATE_DIR="$WORK/state" \
 NOVA_SIM_SCENARIO="$WORK/scenario.json" \
   "$NOVAMOCK" --broker "127.0.0.1:$PORT" --backend "http://127.0.0.1:9" \
-              --sample-ms 20 --publish-ms 50 --stats on --stats-interval-ms 500 \
+              --sample-ms 20 --publish-ms 50 --stats on --stats-ms 500 \
               > "$WORK/novamock.log" 2>&1 &
 PIDS+=($!)
 
@@ -121,7 +121,7 @@ python3 "$WORK/check_seq.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/t
   || fail "telemetry seq and timestamps"
 echo "ok: telemetry carries seq and timestamps with --stats on"
 
-# The stats message: measurements only, at the interval --stats-interval-ms
+# The stats message: measurements only, at the interval --stats-ms
 # asked for (500 ms), with the loops and the two commands above.
 cat > "$WORK/check_stats.py" <<'EOF'
 import json, sys
@@ -133,7 +133,7 @@ if msgs[1]["seq"] != msgs[0]["seq"] + 1:
     sys.exit("stats seq should step by one: %r %r" % (msgs[0]["seq"], msgs[1]["seq"]))
 gap = msgs[1]["time_ms"] - msgs[0]["time_ms"]
 if not 350 <= gap <= 800:
-    sys.exit("--stats-interval-ms 500 but the messages are %d ms apart" % gap)
+    sys.exit("--stats-ms 500 but the messages are %d ms apart" % gap)
 loops = msg["loops"]
 for name in ("sampler", "publisher", "gpio_sampler"):
     if name not in loops:

@@ -105,7 +105,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     std::cout << "Build ID: " << config.node_id
               << "  environment: " << (nova_env && *nova_env ? nova_env : "(not set)") << std::endl;
 
-    // --stats and --stats-interval-ms were read (and any bad value reported and
+    // --stats and --stats-ms were read (and any bad value reported and
     // ignored) by parse_args.
     const bool stats_on = config.stats;
     const int stats_interval_ms = config.stats_interval_ms;

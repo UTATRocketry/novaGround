@@ -14,7 +14,7 @@ struct RuntimeConfig {
     int sample_interval_ms = 1;
     int publish_interval_ms = 50;
     bool stats = false;             // --stats: runtime instrumentation (core/stats.hpp)
-    int stats_interval_ms = 1000;   // --stats-interval-ms
+    int stats_interval_ms = 1000;   // --stats-ms
 };
 
 enum class ParseStatus {
