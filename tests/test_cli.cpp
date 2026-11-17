@@ -1,5 +1,6 @@
 #include <boost/test/unit_test.hpp>
 
+#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -65,6 +66,43 @@ BOOST_AUTO_TEST_CASE(every_flag_sets_its_field) {
     BOOST_TEST(r.result.config.verbosity == 2);
     BOOST_TEST(r.result.config.sample_interval_ms == 100);
     BOOST_TEST(r.result.config.publish_interval_ms == 250);
+}
+
+BOOST_AUTO_TEST_CASE(stop_actuate_is_off_unless_given) {
+    BOOST_TEST(!run({}).result.config.stop_actuate);
+    auto r = run({"--stop-actuate"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stop_actuate);
+    BOOST_TEST(r.err.empty());
+}
+
+BOOST_AUTO_TEST_CASE(stop_actuate_takes_no_value_and_works_among_other_flags) {
+    auto r = run({"--broker", "a", "--stop-actuate", "--stats", "on"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stop_actuate);
+    BOOST_TEST(r.result.config.broker == "a");
+    BOOST_TEST(r.result.config.stats);
+}
+
+// The binary never decides whether the flag is allowed: that is start.sh's and
+// run.sh's job (NOVA_BENCH_FLAGS), so the parser accepts it whatever the
+// environment is.
+BOOST_AUTO_TEST_CASE(stop_actuate_is_accepted_whatever_the_environment) {
+    setenv("NOVA_ENV", "prod", 1);
+    auto r = run({"--stop-actuate"});
+    unsetenv("NOVA_ENV");
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stop_actuate);
+}
+
+BOOST_AUTO_TEST_CASE(usage_lists_stop_actuate) {
+    auto r = run({"--help"});
+    BOOST_TEST(r.out.find("--stop-actuate") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(only_actuators_is_not_a_flag_yet) {
+    auto r = run({"--only-actuators", "relay:3"});
+    BOOST_TEST(r.result.status == ParseStatus::ExitError);
 }
 
 BOOST_AUTO_TEST_CASE(later_flags_override_earlier_ones) {

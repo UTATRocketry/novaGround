@@ -49,6 +49,8 @@ fi
 # shellcheck source=nova-args.sh
 source "${HERE}/nova-args.sh"
 build_args "$NOVA_BROKER" "$NOVA_BACKEND"
+# 78: a restart cannot fix this, and it must not come up with a flag prod forbids.
+check_bench_flags "$ENVIRONMENT" || exit 78
 
 # The binary reads these from its environment. The unit sets NOVA_STATE_DIR to
 # this environment's folder; the env file can override it.

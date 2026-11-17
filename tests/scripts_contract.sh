@@ -17,6 +17,7 @@ accepted="$accepted"$'\n'"--help"
 passed="$(
   {
     grep -h '^ *ARGS=(\|ARGS+=(' "$ROOT/nova-args.sh" || true
+    grep -h '^BENCH_FLAGS=(' "$ROOT/nova-args.sh" || true
     grep -h 'Flags for this Pi' "$ROOT/nova-pi.sh" || true
   } | grep -o -- '--[a-z][a-z-]*' | sort -u
 )"

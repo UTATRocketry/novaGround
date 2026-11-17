@@ -137,6 +137,7 @@ default (the file lists the empty ones commented out):
 | `NOVA_PUBLISH_MS` | `--publish-ms` | Telemetry publish interval. |
 | `NOVA_STATS` | `--stats` | Runtime instrumentation, `on` or `off`. |
 | `NOVA_STATS_MS` | `--stats-ms` | How often the stats are published; see [instrumentation.md](instrumentation.md). |
+| `NOVA_BENCH_FLAGS` | none | `on` lets `start.sh` and `run.sh` pass bench-safety flags (`--stop-actuate`); otherwise they refuse them. Off by default in prod; see [bench-safety.md](bench-safety.md). |
 | `NOVA_SIM_SCENARIO` | none | Scenario file for the simulated hardware (novaMock); the binary reads it from its environment. |
 | `NOVA_STATE_DIR` | none | Where `last_upload.json` goes. Defaults to `/var/lib/nova/<env>`; the binary reads it from its environment. |
 | `NOVA_EXTRA_ARGS` | as written | More flags for this environment only. |
@@ -157,7 +158,7 @@ sudo ./nova-pi.sh configure --env dev --broker 192.168.137.1:1883 --backend 192.
 ```
 
 `configure` takes a flag for every setting above (`--console`, `--verbosity`,
-`--sample-ms`, `--publish-ms`, `--stats`, `--stats-ms`, `--sim-scenario`,
+`--sample-ms`, `--publish-ms`, `--stats`, `--stats-ms`, `--bench-flags`, `--sim-scenario`,
 `--state-dir`, `--extra-args`) and changes only the ones you pass, keeping the
 rest of that environment's file. `--unset NOVA_STATS` removes one, and
 `--global-args "--verbosity 2"` sets `NOVA_GLOBAL_ARGS` in `pi.env`. It restarts
@@ -183,6 +184,16 @@ every 15 seconds, so the console shows what each Pi runs.
 
 `./run.sh` starts the program in a tmux session instead, so it survives a
 dropped SSH connection. It uses dev's settings unless you pass `--env prod`.
+Flags after `--` go to the binary and win over the settings, for one run:
+
+```bash
+./run.sh --env dev -- --stop-actuate
+```
+
+`--stop-actuate` makes the program handle commands without writing any output, for
+bench tests that must not move anything. It needs `NOVA_BENCH_FLAGS` on; see
+[bench-safety.md](bench-safety.md), which also covers how the program shuts down
+on `SIGTERM`.
 
 > [!NOTE]
 > `run.sh` and the services can't run at the same time: they'd share the

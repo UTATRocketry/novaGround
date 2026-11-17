@@ -12,7 +12,7 @@
 #      sudo ./nova-pi.sh use prod|dev
 #      sudo ./nova-pi.sh configure --env prod|dev [--broker <host[:port]>] [--backend <host[:port]>]
 #           [--console <host[:port]|url>] [--verbosity <0|1|2>] [--sample-ms <ms>] [--publish-ms <ms>]
-#           [--stats <on|off>] [--stats-ms <ms>] [--sim-scenario <file>] [--state-dir <dir>]
+#           [--stats <on|off>] [--stats-ms <ms>] [--bench-flags <on|off>] [--sim-scenario <file>] [--state-dir <dir>]
 #           [--extra-args "<flags>"] [--unset NOVA_<NAME>] [--global-args "<flags>"]
 #           ./nova-pi.sh build [--env prod|dev]
 #      sudo ./nova-pi.sh start | stop | restart [--env prod|dev]
@@ -192,6 +192,7 @@ while [[ $# -gt 0 ]]; do
     --publish-ms)   need_value "$@"; SET[NOVA_PUBLISH_MS]="$2"; shift 2 ;;
     --stats)        need_value "$@"; SET[NOVA_STATS]="$2"; shift 2 ;;
     --stats-ms)     need_value "$@"; SET[NOVA_STATS_MS]="$2"; shift 2 ;;
+    --bench-flags)  need_value "$@"; SET[NOVA_BENCH_FLAGS]="$2"; shift 2 ;;
     --sim-scenario) need_value "$@"; SET[NOVA_SIM_SCENARIO]="$2"; shift 2 ;;
     --state-dir)    need_value "$@"; SET[NOVA_STATE_DIR]="$2"; shift 2 ;;
     --extra-args)   need_value "$@"; SET[NOVA_EXTRA_ARGS]="$2"; shift 2 ;;
@@ -225,9 +226,10 @@ if [[ "$GLOBAL_ARGS" == *["$BAD_CHARS"]* ]]; then err "--global-args can't conta
 
 # The settings an environment's file can hold, in the order they're written.
 # start.sh and run.sh turn them into flags (nova-args.sh), except
-# NOVA_SIM_SCENARIO and NOVA_STATE_DIR, which the binary reads itself.
+# NOVA_SIM_SCENARIO and NOVA_STATE_DIR, which the binary reads itself, and
+# NOVA_BENCH_FLAGS, which the scripts read to decide whether a flag is allowed.
 ENV_KEYS=(NOVA_BROKER NOVA_BACKEND NOVA_CONSOLE NOVA_VERBOSITY NOVA_SAMPLE_MS NOVA_PUBLISH_MS
-          NOVA_STATS NOVA_STATS_MS NOVA_SIM_SCENARIO NOVA_STATE_DIR NOVA_EXTRA_ARGS)
+          NOVA_STATS NOVA_STATS_MS NOVA_BENCH_FLAGS NOVA_SIM_SCENARIO NOVA_STATE_DIR NOVA_EXTRA_ARGS)
 declare -A ENV_HELP=(
   [NOVA_BROKER]="MQTT broker on the ops PC: host or host:port (default port 1883)."
   [NOVA_BACKEND]="novaOps backend: host or host:port (default port 8000)."
@@ -237,6 +239,7 @@ declare -A ENV_HELP=(
   [NOVA_PUBLISH_MS]="Telemetry publish interval in ms."
   [NOVA_STATS]="Runtime instrumentation: on or off."
   [NOVA_STATS_MS]="How often stats are published, in ms."
+  [NOVA_BENCH_FLAGS]="Allow bench-safety flags such as --stop-actuate (on or off). start.sh and run.sh refuse them when off."
   [NOVA_SIM_SCENARIO]="Scenario file for the simulated hardware (novaMock)."
   [NOVA_STATE_DIR]="Where novaGround keeps last_upload.json (default /var/lib/nova/<env>)."
   [NOVA_EXTRA_ARGS]="More flags for this environment only; they come after NOVA_GLOBAL_ARGS in pi.env."

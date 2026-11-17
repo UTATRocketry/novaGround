@@ -58,6 +58,8 @@ void print_usage(std::ostream& out, const char* exe_name) {
         << "  --publish-ms <ms>                   Telemetry publish interval\n"
         << "  --stats <on|off>                    Runtime instrumentation (default off)\n"
         << "  --stats-ms <ms>                     How often stats are published (default 1000)\n"
+        << "  --stop-actuate                      Bench testing: parse, route and time commands but never write\n"
+        << "                                      an output. Outputs are still set up at startup.\n"
         << "  --help                              Show this message\n";
 }
 
@@ -145,6 +147,10 @@ ParseResult parse_args(const std::vector<std::string>& args,
                     << "' (a whole number of milliseconds, 1 or more); using " << config.stats_interval_ms
                     << ".\n";
             }
+            continue;
+        }
+        if (arg == "--stop-actuate") {
+            config.stop_actuate = true;
             continue;
         }
         err << "Unknown option: " << arg << "\n";

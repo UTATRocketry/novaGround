@@ -72,11 +72,13 @@ teardown() { teardown_sandbox; }
   grep -qx 'NOVA_PUBLISH_MS=100' "$f"
   grep -qx 'NOVA_STATS=on' "$f"
   grep -qx 'NOVA_STATS_MS=500' "$f"
+  grep -qx 'NOVA_BENCH_FLAGS=on' "$f"
   grep -qx 'NOVA_SIM_SCENARIO=/srv/run.json' "$f"
   grep -qx 'NOVA_STATE_DIR=/srv/nova' "$f"
   grep -qx 'NOVA_EXTRA_ARGS="--publish-ms 80"' "$f"
   run "$NP" configure --env prod --broker pc:1883 --backend pc:8000
   grep -qx '#NOVA_STATS_MS=' "$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
+  grep -qx '#NOVA_BENCH_FLAGS=' "$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
 }
 
 @test "configure keeps the settings it is not given" {

@@ -15,6 +15,7 @@ struct RuntimeConfig {
     int publish_interval_ms = 50;
     bool stats = false;             // --stats: runtime instrumentation (core/stats.hpp)
     int stats_interval_ms = 1000;   // --stats-ms
+    bool stop_actuate = false;      // --stop-actuate: drop every output write (core/actuation_guard.hpp)
 };
 
 enum class ParseStatus {

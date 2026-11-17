@@ -12,7 +12,7 @@ setup() {
   printf '#!/usr/bin/env bash\necho "BINARY ran with: $*"\n' > "$CHECKOUT/build/novaGround"
   chmod +x "$CHECKOUT/start.sh" "$CHECKOUT/build/novaGround"
   export NOVA_ENV=dev NOVA_TARGET=novaGround NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001
-  unset NOVA_EXTRA_ARGS NOVA_GLOBAL_ARGS NOVA_VERBOSITY NOVA_SAMPLE_MS NOVA_PUBLISH_MS NOVA_STATS NOVA_STATS_MS NOVA_SIM_SCENARIO NOVA_STATE_DIR
+  unset NOVA_BENCH_FLAGS NOVA_EXTRA_ARGS NOVA_GLOBAL_ARGS NOVA_VERBOSITY NOVA_SAMPLE_MS NOVA_PUBLISH_MS NOVA_STATS NOVA_STATS_MS NOVA_SIM_SCENARIO NOVA_STATE_DIR
 }
 
 teardown() { teardown_sandbox; }
@@ -147,4 +147,44 @@ teardown() { teardown_sandbox; }
   run "$CHECKOUT/start.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"STATE=/var/lib/nova/dev SCENARIO="* ]]
+}
+
+@test "refuses --stop-actuate with exit 78 unless NOVA_BENCH_FLAGS is on" {
+  NOVA_EXTRA_ARGS="--stop-actuate" run "$CHECKOUT/start.sh"
+  [ "$status" -eq 78 ]
+  [[ "$output" == *"--stop-actuate is not allowed in the dev environment"* ]]
+  [[ "$output" != *"BINARY ran"* ]]
+}
+
+@test "refuses --stop-actuate that comes from NOVA_GLOBAL_ARGS too" {
+  NOVA_GLOBAL_ARGS="--verbosity 2 --stop-actuate" run "$CHECKOUT/start.sh"
+  [ "$status" -eq 78 ]
+  [[ "$output" != *"BINARY ran"* ]]
+}
+
+@test "the refusal names the environment, and is the same in prod" {
+  NOVA_ENV=prod NOVA_EXTRA_ARGS="--stop-actuate" run "$CHECKOUT/start.sh"
+  [ "$status" -eq 78 ]
+  [[ "$output" == *"not allowed in the prod environment"* ]]
+}
+
+@test "NOVA_BENCH_FLAGS off or garbage still refuses" {
+  for v in off 0 false no "" maybe; do
+    NOVA_BENCH_FLAGS="$v" NOVA_EXTRA_ARGS="--stop-actuate" run "$CHECKOUT/start.sh"
+    [ "$status" -eq 78 ]
+  done
+}
+
+@test "--stop-actuate reaches the binary when NOVA_BENCH_FLAGS is on" {
+  for v in on ON 1 true yes; do
+    NOVA_BENCH_FLAGS="$v" NOVA_EXTRA_ARGS="--stop-actuate" run "$CHECKOUT/start.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"BINARY ran with: --broker pc:1884 --backend pc:8001 --stop-actuate"* ]]
+  done
+}
+
+@test "NOVA_BENCH_FLAGS on does not add a flag by itself" {
+  NOVA_BENCH_FLAGS=on run "$CHECKOUT/start.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"--stop-actuate"* ]]
 }

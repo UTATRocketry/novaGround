@@ -324,14 +324,16 @@ BOOST_AUTO_TEST_CASE(the_info_message_has_identity_loops_and_how_to_read_the_sta
     auto info = parse(stats.identity_json());
 
     BOOST_TEST(!info.contains("node"));  // the topic names it
-    // Nothing about the settings the program runs with, for now.
-    for (const char* key : {"env", "git_commit", "actuation"}) {
+    // Only the actuation mode, for now: the Pi report already says which
+    // environment runs, and nothing needs the commit yet.
+    for (const char* key : {"env", "git_commit"}) {
         BOOST_TEST_CONTEXT(key) { BOOST_TEST(!info.contains(key)); }
     }
     BOOST_TEST(number(info.at("schema")) == 1.0);
     BOOST_TEST(text(info.at("build_id")) == "novaTest");
     BOOST_TEST(number(info.at("stats_interval_ms")) == 250.0);
     BOOST_TEST(number(info.at("started_ms")) > 1.0e12);
+    BOOST_TEST(text(info.at("actuation")) == "enabled");
 
     const auto& loops = info.at("loops").as_object();
     BOOST_TEST(loops.size() == 2u);
@@ -345,6 +347,27 @@ BOOST_AUTO_TEST_CASE(the_info_message_has_identity_loops_and_how_to_read_the_sta
 
     // It describes the process, not the second: asking again changes nothing.
     BOOST_TEST(stats.identity_json() == stats.identity_json());
+}
+
+BOOST_AUTO_TEST_CASE(the_info_message_announces_stopped_actuation) {
+    StatsIdentity id = identity();
+    id.actuation = "stopped";
+    StatsRegistry stats(id, true);
+    BOOST_TEST(text(parse(stats.identity_json()).at("actuation")) == "stopped");
+}
+
+BOOST_AUTO_TEST_CASE(stopped_writes_are_counted_in_every_stats_message) {
+    StatsRegistry stats(identity(), true);
+    BOOST_TEST(number(parse(stats.take_stats_json()).at("stopped_writes")) == 0.0);
+    stats.count_stopped_write();
+    stats.count_stopped_write();
+    BOOST_TEST(number(parse(stats.take_stats_json()).at("stopped_writes")) == 2.0);
+    // Since the start, like the other counters, not per message.
+    BOOST_TEST(number(parse(stats.take_stats_json()).at("stopped_writes")) == 2.0);
+
+    StatsRegistry off(identity(), false);
+    off.count_stopped_write();
+    BOOST_TEST(number(parse(off.take_stats_json()).at("stopped_writes")) == 0.0);
 }
 
 BOOST_AUTO_TEST_CASE(the_router_times_commands_by_type) {
