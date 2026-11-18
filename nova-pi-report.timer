@@ -1,0 +1,13 @@
+# Runs nova-pi-report.service every 15 s. The Nova Console marks a Pi's
+# report stale after 45 s without one.
+
+[Unit]
+Description=Report novaGround state to the Nova Console every 15 s
+
+[Timer]
+OnBootSec=20
+OnUnitActiveSec=15
+AccuracySec=1
+
+[Install]
+WantedBy=timers.target

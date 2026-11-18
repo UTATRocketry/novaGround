@@ -8,10 +8,12 @@
 #  Run once on a fresh Pi:   sudo ./install.sh
 #  Day-to-day operation afterwards is ./nova-pi.sh (start/stop/status/update).
 #
-#  Configuration is written to /etc/nova/novaGround.env. The unit file itself
-#  is never edited: an earlier version of this script used `sed -i` on the
-#  tracked novaGround.service, which permanently dirtied the repo and made
-#  `git pull --ff-only` fail on every subsequent update.
+#  It only asks which Pi this is (written to /etc/nova/pi.env). Each
+#  environment's broker and backend come from the ops PC: Nova.ps1 writes
+#  /etc/nova/novaGround-prod.env and -dev.env. The unit file itself is never
+#  edited: an earlier version of this script used `sed -i` on the tracked
+#  unit, which permanently dirtied the repo and made `git pull --ff-only` fail
+#  on every subsequent update.
 # ============================================================================
 set -uo pipefail
 
@@ -26,9 +28,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # invoked sudo, which is what we want -- not root.
 RUN_USER="${SUDO_USER:-admin}"
 BUILD_ROOT="$(cd "${HERE}/.." && pwd)"   # /home/admin/prod or /home/admin/dev
-
-ENV_DIR="/etc/nova"
-ENV_FILE="${ENV_DIR}/novaGround.env"
 
 echo "novaGround installer"
 echo "  repo:      ${HERE}"
@@ -52,7 +51,7 @@ if [ "$install_deps" == "y" ]; then
                    libbz2-dev libz-dev libicu-dev git
 
     echo "Installing libraries..."
-    apt install -y libpaho-mqtt-dev libgpiod-dev libcurl4-openssl-dev
+    apt install -y libpaho-mqtt-dev libpaho-mqttpp-dev libgpiod-dev libcurl4-openssl-dev
 
     echo "Installing utilities..."
     # avahi-daemon publishes this Pi as <hostname>.local, so the ops PC can
@@ -97,78 +96,49 @@ if [ "$install_deps" == "y" ]; then
         sudo -u "$RUN_USER" git clone https://github.com/WiringPi/WiringPi.git
         cd WiringPi
         sudo -u "$RUN_USER" ./build debian
-        mv debian-template/wiringpi_3.18_arm64.deb .
-        apt install -y ./wiringpi_3.18_arm64.deb
+        apt install -y ./debian-template/wiringpi_*_arm64.deb
     else
         echo "WiringPi already installed - skipping."
     fi
 fi
 
-# ── application settings ─────────────────────────────────────────────────────
+# ── which Pi this is ─────────────────────────────────────────────────────────
+#
+# Only the Pi's own identity is asked for here. The broker and backend
+# addresses for each environment come from the ops PC: Nova.ps1 writes
+# /etc/nova/novaGround-prod.env and -dev.env from its settings on every
+# 'use', 'deploy' and 'get-changes', so they always match the stack that's live.
 
 echo
-read -p "Configure novaGround settings now? (y/n): " change_app
-if [ "$change_app" == "y" ]; then
-    read -p "Build to run (Ground/Thermo/Mock) [Ground]: " build_type
-    read -p "MQTT broker address [192.168.137.1]: " broker_address
-    read -p "Backend address [192.168.137.1:8000]: " backend_address
-    read -p "Sample interval in ms (blank for the build default): " sample_interval
-    read -p "Publish interval in ms (blank for the build default): " publish_interval
-    read -p "FAS serial port (blank to disable, e.g. /dev/ttyUSB0): " fas_port
-    read -p "FAS baud rate [460800]: " fas_baud
-
-    # Map the friendly name onto the actual binary name.
-    case "${build_type:-Ground}" in
-        Ground|ground|novaGround) target="novaGround" ;;
-        Thermo|thermo|novaThermo) target="novaThermo" ;;
-        Mock|mock|novaMock)       target="novaMock"   ;;
-        *) echo "Unrecognised build '${build_type}', defaulting to novaGround"; target="novaGround" ;;
-    esac
-
-    extra_args=""
-    [ -n "$sample_interval" ]  && extra_args="${extra_args} --sample-ms ${sample_interval}"
-    [ -n "$publish_interval" ] && extra_args="${extra_args} --publish-ms ${publish_interval}"
-
-    mkdir -p "$ENV_DIR"
-    cat > "$ENV_FILE" <<EOF
-# novaGround runtime configuration, written by install.sh.
-# Read by both the systemd service and ./run.sh.
-# After changing anything here:  sudo systemctl restart novaGround
-
-NOVA_TARGET=${target}
-NOVA_BROKER=${broker_address:-192.168.137.1}
-NOVA_BACKEND=${backend_address:-192.168.137.1:8000}
-
-# Leave NOVA_FAS_PORT empty when no RS-422 adapter is fitted; start.sh then
-# launches without the FAS link instead of failing.
-NOVA_FAS_PORT=${fas_port}
-NOVA_FAS_BAUD=${fas_baud:-460800}
-
-NOVA_EXTRA_ARGS=${extra_args# }
-EOF
-    chmod 644 "$ENV_FILE"
-    echo "Wrote ${ENV_FILE}"
-else
-    echo "Skipping app settings - nova-pi.sh will write defaults."
-fi
+read -p "Which Pi is this (Ground/Thermo/Mock) [Ground]: " build_type
+case "${build_type:-Ground}" in
+    Ground|ground|novaGround) target="novaGround" ;;
+    Thermo|thermo|novaThermo) target="novaThermo" ;;
+    Mock|mock|novaMock)       target="novaMock"   ;;
+    *) echo "Unrecognised build '${build_type}', defaulting to novaGround"; target="novaGround" ;;
+esac
 
 # ── build and service registration ───────────────────────────────────────────
 
 chmod +x "${HERE}/nova-pi.sh" "${HERE}/start.sh" "${HERE}/run.sh" 2>/dev/null
 
+# Build the environment this checkout belongs to.
+build_env="prod"
+[ "$(basename "$BUILD_ROOT")" == "dev" ] && build_env="dev"
+
 echo
-read -p "Build novaGround now? (y/n): " do_build
+read -p "Build novaGround ($build_env) now? (y/n): " do_build
 if [ "$do_build" == "y" ]; then
-    sudo -u "$RUN_USER" "${HERE}/nova-pi.sh" build
+    sudo -u "$RUN_USER" "${HERE}/nova-pi.sh" build --env "$build_env"
 fi
 
 echo
-read -p "Install as a systemd service (starts on boot)? (y/n): " install_service
-# The previous version ignored this answer and installed regardless.
+read -p "Install the novaGround@prod / novaGround@dev services (prod starts on boot)? (y/n): " install_service
 if [ "$install_service" == "y" ]; then
-    "${HERE}/nova-pi.sh" install
+    "${HERE}/nova-pi.sh" install --target "$target"
     echo
-    echo "Start it now with:  sudo ${HERE}/nova-pi.sh start"
+    echo "Then, on the ops PC:  .\\ops\\Nova.ps1 use prod"
+    echo "That writes this Pi's prod and dev settings and starts novaGround@prod."
 else
     echo "Skipping service installation."
     echo "Run manually with:  ${HERE}/run.sh"

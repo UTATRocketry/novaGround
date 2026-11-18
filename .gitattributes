@@ -4,6 +4,7 @@
 # field. This holds regardless of a contributor's core.autocrlf setting.
 *.sh        text eol=lf
 *.service   text eol=lf
+*.timer     text eol=lf
 *.env       text eol=lf
 
 # Build and config files that also get read on Linux.

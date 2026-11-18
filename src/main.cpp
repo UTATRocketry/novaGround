@@ -171,11 +171,16 @@ int main(int argc, char* argv[]) {
     std::string backend_base = normalize_backend_base(config.backend);
     std::string upload_url = build_upload_url(backend_base);
 
+    // Always say where data is going (issue #29): a wrong backend port used to
+    // be invisible until the recordings went missing.
+    const char* nova_env = std::getenv("NOVA_ENV");
+    std::cout << "Build ID: " << config.node_id
+              << "  environment: " << (nova_env && *nova_env ? nova_env : "(not set)") << std::endl;
+    std::cout << "Broker: " << broker_address << std::endl;
+    std::cout << "Backend: " << backend_base << "  (uploads to " << upload_url << ")" << std::endl;
+    check_backend(backend_base);
+
     if (config.verbosity >= 2) {
-        std::cout << "Build ID: " << config.node_id << std::endl;
-        std::cout << "Broker: " << broker_address << std::endl;
-        std::cout << "Backend: " << backend_base << std::endl;
-        std::cout << "Upload URL: " << upload_url << std::endl;
         std::cout << "Sample interval (ms): " << config.sample_interval_ms << std::endl;
         std::cout << "Publish interval (ms): " << config.publish_interval_ms << std::endl;
     }

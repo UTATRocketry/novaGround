@@ -5,6 +5,10 @@
 
 #include "core/data_logger.hpp"
 
+// Logs whether the backend's /health answers. Runs in the background and
+// returns at once.
+void check_backend(const std::string& backend_base);
+
 class DataFileController {
 public:
     DataFileController(DataLogger* logger, std::string upload_url);
