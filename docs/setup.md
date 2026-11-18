@@ -180,6 +180,11 @@ backend's `/health` doesn't answer. Every data-file upload is logged as
 `nova-pi-report.timer` sends `./nova-pi.sh status --json` to the Nova Console
 every 15 seconds, so the console shows what each Pi runs.
 
+`./nova-pi.sh metrics --json` prints read-only system metrics: per-core CPU,
+load, memory, temperature, `vcgencmd get_throttled`, the running instance's PID,
+CPU and RSS, disk I/O and clock sync. It needs no `sudo` and writes nothing, so
+it is safe to run over SSH as `admin` while a test is running.
+
 ### On the bench
 
 `./run.sh` starts the program in a tmux session instead, so it survives a
