@@ -183,7 +183,7 @@ BOOST_AUTO_TEST_CASE(every_flag_in_the_usage_text_is_accepted) {
         if (pos == std::string::npos) continue;
         std::string flag = line.substr(pos, line.find_first_of(" \t", pos) - pos);
         std::vector<std::string> args{flag};
-        if (flag != "--help") args.push_back(flag == "--broker" || flag == "--backend" ? "x" : "1");
+        if (flag != "--help" && flag != "--stop-actuate") args.push_back(flag == "--broker" || flag == "--backend" ? "x" : "1");
         BOOST_TEST(run(args).result.status != ParseStatus::ExitError, flag);
         ++flags;
     }
