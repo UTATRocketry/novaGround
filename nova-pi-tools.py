@@ -328,6 +328,7 @@ def metrics():
     load = (read_text(PROC + "/loadavg") or "").split()
     temp = read_text(SYS + "/class/thermal/thermal_zone0/temp")
     pid, via = instance_pid(None)
+    info = process_info(pid)  # None when the PID can't be read
     timedate = key_values(run(["timedatectl", "show"]))
     out = {
         "version": 1,
@@ -340,7 +341,7 @@ def metrics():
         "memory": meminfo(read_text(PROC + "/meminfo")),
         "tempC": int(temp) / 1000.0 if temp and temp.strip().lstrip("-").isdigit() else None,
         "throttled": key_values(run(["vcgencmd", "get_throttled"])).get("throttled"),
-        "instance": dict(process_info(pid) or {}, via=via) if pid else None,
+        "instance": dict(info, via=via) if info else None,
         "disks": diskstats(read_text(PROC + "/diskstats")),
         "clock": {k: timedate.get(k) for k in ("NTPSynchronized", "NTP", "Timezone", "TimeUSec")},
     }

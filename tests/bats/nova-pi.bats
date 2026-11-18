@@ -442,6 +442,7 @@ PY
 
 @test "metrics --json still works with nothing running and nothing readable" {
   export PROC_ROOT="$SANDBOX/none" SYS_ROOT="$SANDBOX/none"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$STUBS/pgrep"; chmod +x "$STUBS/pgrep"
   run "$NP" metrics --json
   [ "$status" -eq 0 ]
   python3 -c 'import json,sys; m=json.loads(sys.argv[1]); assert m["instance"] is None and m["tempC"] is None' "$output"
