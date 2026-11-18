@@ -62,7 +62,7 @@ teardown() { teardown_sandbox; }
 
 @test "configure can set every setting, and lists the ones it leaves empty" {
   run "$NP" configure --env dev --broker pc:1884 --backend pc:8001 --console pc \
-    --verbosity 2 --sample-ms 20 --publish-ms 100 --stats on --stats-ms 500 \
+    --verbosity 2 --sample-ms 20 --publish-ms 100 --stats on --stats-ms 500 --bench-flags on \
     --sim-scenario /srv/run.json --state-dir /srv/nova --extra-args "--publish-ms 80"
   [ "$status" -eq 0 ]
   f="$NOVA_PI_ROOT/etc/nova/novaGround-dev.env"

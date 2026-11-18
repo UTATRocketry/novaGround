@@ -138,7 +138,7 @@ teardown() { teardown_sandbox; }
 }
 
 @test "-- passes the rest to the binary, after the settings" {
-  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_VERBOSITY=1 NOVA_EXTRA_ARGS="--publish-ms 80"
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_VERBOSITY=1 'NOVA_EXTRA_ARGS="--publish-ms 80"'
   run "$CHECKOUT/run.sh" --env dev -- --verbosity 2 --publish-ms 20
   [ "$status" -eq 0 ]
   grep -q -- '--verbosity 1 --publish-ms 80 --verbosity 2 --publish-ms 20' "$CALLS"
