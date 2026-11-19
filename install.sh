@@ -70,10 +70,10 @@ if [ "$install_deps" == "y" ]; then
     # -- Boost --
     if [ ! -f /usr/local/include/boost/version.hpp ]; then
         echo "Installing boost (this takes a while)..."
-        cd "$BUILD_ROOT"
+        cd "$BUILD_ROOT" || exit 1
         sudo -u "$RUN_USER" wget -q https://archives.boost.io/release/1.81.0/source/boost_1_81_0.tar.bz2
         sudo -u "$RUN_USER" tar xf boost_1_81_0.tar.bz2
-        cd boost_1_81_0
+        cd boost_1_81_0 || exit 1
         ./bootstrap.sh --prefix=/usr/local
         ./b2
         ./b2 install
@@ -92,9 +92,9 @@ if [ "$install_deps" == "y" ]; then
     # -- WiringPi (servo drivers) --
     if ! command -v gpio >/dev/null 2>&1; then
         echo "Installing WiringPi..."
-        cd "$BUILD_ROOT"
+        cd "$BUILD_ROOT" || exit 1
         sudo -u "$RUN_USER" git clone https://github.com/WiringPi/WiringPi.git
-        cd WiringPi
+        cd WiringPi || exit 1
         sudo -u "$RUN_USER" ./build debian
         apt install -y ./debian-template/wiringpi_*_arm64.deb
     else

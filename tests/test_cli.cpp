@@ -1,0 +1,263 @@
+#include <boost/test/unit_test.hpp>
+
+#include <cstdlib>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "utils/cli.hpp"
+
+// Boost.Test prints both sides of a failed comparison, and an enum class has no
+// operator<< of its own. ParseStatus is in the global namespace, so ADL finds this.
+inline std::ostream& operator<<(std::ostream& os, ParseStatus s) {
+    switch (s) {
+        case ParseStatus::Run: return os << "Run";
+        case ParseStatus::ExitOk: return os << "ExitOk";
+        case ParseStatus::ExitError: return os << "ExitError";
+    }
+    return os << "ParseStatus(" << static_cast<int>(s) << ")";
+}
+
+namespace {
+RuntimeConfig defaults() {
+    RuntimeConfig d;
+    d.node_id = "novaTest";
+    d.broker = "localhost:1883";
+    d.backend = "http://localhost:8000";
+    d.verbosity = 1;
+    d.sample_interval_ms = 1;
+    d.publish_interval_ms = 50;
+    return d;
+}
+
+struct Run {
+    ParseResult result;
+    std::string out;
+    std::string err;
+};
+
+Run run(const std::vector<std::string>& args) {
+    std::ostringstream out, err;
+    Run r;
+    r.result = parse_args(args, defaults(), "novaTest", out, err);
+    r.out = out.str();
+    r.err = err.str();
+    return r;
+}
+}
+
+BOOST_AUTO_TEST_SUITE(cli)
+
+BOOST_AUTO_TEST_CASE(no_arguments_keeps_the_defaults) {
+    auto r = run({});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.node_id == "novaTest");
+    BOOST_TEST(r.result.config.broker == "localhost:1883");
+    BOOST_TEST(r.result.config.sample_interval_ms == 1);
+    BOOST_TEST(r.result.config.publish_interval_ms == 50);
+}
+
+BOOST_AUTO_TEST_CASE(every_flag_sets_its_field) {
+    auto r = run({"--broker", "10.0.0.2:1884", "--backend", "pc:8001", "--verbosity", "2",
+                  "--sample-ms", "100", "--publish-ms", "250"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.broker == "10.0.0.2:1884");
+    BOOST_TEST(r.result.config.backend == "pc:8001");
+    BOOST_TEST(r.result.config.verbosity == 2);
+    BOOST_TEST(r.result.config.sample_interval_ms == 100);
+    BOOST_TEST(r.result.config.publish_interval_ms == 250);
+}
+
+BOOST_AUTO_TEST_CASE(stop_actuate_is_off_unless_given) {
+    BOOST_TEST(!run({}).result.config.stop_actuate);
+    auto r = run({"--stop-actuate"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stop_actuate);
+    BOOST_TEST(r.err.empty());
+}
+
+BOOST_AUTO_TEST_CASE(stop_actuate_takes_no_value_and_works_among_other_flags) {
+    auto r = run({"--broker", "a", "--stop-actuate", "--stats", "on"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stop_actuate);
+    BOOST_TEST(r.result.config.broker == "a");
+    BOOST_TEST(r.result.config.stats);
+}
+
+// The binary never decides whether the flag is allowed: that is start.sh's and
+// run.sh's job (NOVA_BENCH_FLAGS), so the parser accepts it whatever the
+// environment is.
+BOOST_AUTO_TEST_CASE(stop_actuate_is_accepted_whatever_the_environment) {
+    setenv("NOVA_ENV", "prod", 1);
+    auto r = run({"--stop-actuate"});
+    unsetenv("NOVA_ENV");
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stop_actuate);
+}
+
+BOOST_AUTO_TEST_CASE(usage_lists_stop_actuate) {
+    auto r = run({"--help"});
+    BOOST_TEST(r.out.find("--stop-actuate") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(only_actuators_is_not_a_flag_yet) {
+    auto r = run({"--only-actuators", "relay:3"});
+    BOOST_TEST(r.result.status == ParseStatus::ExitError);
+}
+
+BOOST_AUTO_TEST_CASE(later_flags_override_earlier_ones) {
+    auto r = run({"--broker", "a", "--broker", "b"});
+    BOOST_TEST(r.result.config.broker == "b");
+}
+
+BOOST_AUTO_TEST_CASE(help_prints_usage_and_exits_ok) {
+    for (const char* flag : {"--help", "-h"}) {
+        auto r = run({flag});
+        BOOST_TEST(r.result.status == ParseStatus::ExitOk);
+        BOOST_TEST(r.out.find("Usage: novaTest") == 0u);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(unknown_option_is_an_error) {
+    auto r = run({"--fas-port", "COM3"});
+    BOOST_TEST(r.result.status == ParseStatus::ExitError);
+    BOOST_TEST(r.err.find("Unknown option: --fas-port") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(flag_without_a_value_is_an_error) {
+    for (const char* flag : {"--broker", "--backend", "--verbosity", "--sample-ms", "--publish-ms"}) {
+        auto r = run({flag});
+        BOOST_TEST(r.result.status == ParseStatus::ExitError, flag);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(non_numeric_values_are_errors) {
+    for (const char* flag : {"--verbosity", "--sample-ms", "--publish-ms"}) {
+        for (const char* bad : {"abc", "", "1x", "1.5", "99999999999"}) {
+            auto r = run({flag, bad});
+            BOOST_TEST(r.result.status == ParseStatus::ExitError, std::string(flag) + " " + bad);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(parse_int_rules) {
+    int v = 7;
+    BOOST_TEST(parse_int("42", v));
+    BOOST_TEST(v == 42);
+    BOOST_TEST(parse_int("-3", v));
+    BOOST_TEST(v == -3);
+    v = 7;
+    BOOST_TEST(!parse_int("4 2", v));
+    BOOST_TEST(v == 7);  // untouched on failure
+}
+
+BOOST_AUTO_TEST_CASE(normalize_broker_address_cases) {
+    BOOST_TEST(normalize_broker_address("localhost") == "mqtt://localhost:1883");
+    BOOST_TEST(normalize_broker_address("10.0.0.2:1884") == "mqtt://10.0.0.2:1884");
+    BOOST_TEST(normalize_broker_address("mqtt://host") == "mqtt://host");
+    BOOST_TEST(normalize_broker_address("tcp://host:1") == "tcp://host:1");
+}
+
+BOOST_AUTO_TEST_CASE(normalize_backend_base_cases) {
+    BOOST_TEST(normalize_backend_base("pc") == "http://pc:8000");
+    BOOST_TEST(normalize_backend_base("pc:8001") == "http://pc:8001");
+    BOOST_TEST(normalize_backend_base("https://pc/") == "https://pc");
+    BOOST_TEST(normalize_backend_base("http://pc:8001/") == "http://pc:8001");
+}
+
+BOOST_AUTO_TEST_CASE(build_upload_url_cases) {
+    BOOST_TEST(build_upload_url("http://pc:8000") == "http://pc:8000/api/data-files/upload");
+    BOOST_TEST(build_upload_url("http://pc:8000/api/data-files/upload") ==
+               "http://pc:8000/api/data-files/upload");
+}
+
+// Every flag the usage text advertises must be accepted.
+BOOST_AUTO_TEST_CASE(every_flag_in_the_usage_text_is_accepted) {
+    std::ostringstream usage;
+    print_usage(usage, "novaTest");
+    std::istringstream in(usage.str());
+    std::string line;
+    int flags = 0;
+    while (std::getline(in, line)) {
+        auto pos = line.find("--");
+        if (pos == std::string::npos) continue;
+        std::string flag = line.substr(pos, line.find_first_of(" \t", pos) - pos);
+        std::vector<std::string> args{flag};
+        if (flag != "--help" && flag != "--stop-actuate") args.push_back(flag == "--broker" || flag == "--backend" ? "x" : "1");
+        BOOST_TEST(run(args).result.status != ParseStatus::ExitError, flag);
+        ++flags;
+    }
+    BOOST_TEST(flags >= 6);
+}
+
+BOOST_AUTO_TEST_CASE(stats_are_off_at_1000_ms_by_default) {
+    auto r = run({});
+    BOOST_TEST(!r.result.config.stats);
+    BOOST_TEST(r.result.config.stats_interval_ms == 1000);
+}
+
+BOOST_AUTO_TEST_CASE(the_stats_flags_set_their_fields) {
+    auto r = run({"--stats", "on", "--stats-ms", "250"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);
+    BOOST_TEST(r.result.config.stats);
+    BOOST_TEST(r.result.config.stats_interval_ms == 250);
+    BOOST_TEST(r.err.empty());
+
+    // The env file's spellings work too, since the scripts pass them as written.
+    BOOST_TEST(run({"--stats", "1"}).result.config.stats);
+    BOOST_TEST(run({"--stats", "TRUE"}).result.config.stats);
+    BOOST_TEST(!run({"--stats", "0"}).result.config.stats);
+    BOOST_TEST(!run({"--stats", "off"}).result.config.stats);
+}
+
+BOOST_AUTO_TEST_CASE(a_later_stats_flag_overrides_an_earlier_one) {
+    // start.sh puts the env file's value first and NOVA_EXTRA_ARGS after it.
+    BOOST_TEST(!run({"--stats", "1", "--stats", "off"}).result.config.stats);
+    BOOST_TEST(run({"--stats-ms", "100", "--stats-ms", "200"})
+                   .result.config.stats_interval_ms == 200);
+}
+
+BOOST_AUTO_TEST_CASE(a_malformed_stats_value_is_reported_and_the_program_carries_on) {
+    auto r = run({"--stats", "maybe", "--broker", "pc:1"});
+    BOOST_TEST(r.result.status == ParseStatus::Run);  // not ExitError, unlike the other flags
+    BOOST_TEST(!r.result.config.stats);
+    BOOST_TEST(r.err.find("Invalid --stats value 'maybe'") != std::string::npos);
+    BOOST_TEST(r.result.config.broker == "pc:1");  // the rest still parsed
+
+    // A bad value after a good one turns stats off rather than keeping them on.
+    auto later = run({"--stats", "on", "--stats", "2"});
+    BOOST_TEST(later.result.status == ParseStatus::Run);
+    BOOST_TEST(!later.result.config.stats);
+}
+
+BOOST_AUTO_TEST_CASE(a_malformed_interval_is_reported_and_keeps_the_previous_value) {
+    for (const char* bad : {"0", "-5", "1.5", "abc", "10ms"}) {
+        auto r = run({"--stats-ms", bad});
+        BOOST_TEST_CONTEXT(bad) {
+            BOOST_TEST(r.result.status == ParseStatus::Run);
+            BOOST_TEST(r.result.config.stats_interval_ms == 1000);
+            BOOST_TEST(r.err.find("Invalid --stats-ms value") != std::string::npos);
+        }
+    }
+    auto r = run({"--stats-ms", "300", "--stats-ms", "nope"});
+    BOOST_TEST(r.result.config.stats_interval_ms == 300);
+}
+
+BOOST_AUTO_TEST_CASE(a_stats_flag_missing_its_value_is_reported_and_ignored) {
+    auto a = run({"--stats"});
+    BOOST_TEST(a.result.status == ParseStatus::Run);
+    BOOST_TEST(!a.result.config.stats);
+    BOOST_TEST(a.err.find("--stats needs a value") != std::string::npos);
+    auto b = run({"--stats-ms"});
+    BOOST_TEST(b.result.status == ParseStatus::Run);
+    BOOST_TEST(b.result.config.stats_interval_ms == 1000);
+    BOOST_TEST(b.err.find("--stats-ms needs a value") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(the_usage_lists_the_stats_flags) {
+    auto r = run({"--help"});
+    BOOST_TEST(r.out.find("--stats <on|off>") != std::string::npos);
+    BOOST_TEST(r.out.find("--stats-ms <ms>") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

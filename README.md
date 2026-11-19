@@ -21,9 +21,11 @@ src/
 └── utils/
 docs/setup.md         install, build, run and configure in detail
 install.sh            one-time Pi setup
-nova-pi.sh            install, use prod|dev, build, status, logs, deploy, doctor, report
+nova-pi.sh            install, use prod|dev, build, configure, status, logs, deploy, doctor, report
+nova-pi-tools.py      the Python behind nova-pi.sh: status snapshot, report, release lookup
 start.sh              service entry point (systemd runs this)
 run.sh                interactive tmux session, for bench work
+nova-args.sh          turns the NOVA_* settings into the binary's flags (start.sh and run.sh use it)
 novaGround@.service   the systemd unit: novaGround@prod and novaGround@dev
 nova-pi-report.*      timer that reports this Pi's state to the Nova Console
 ```

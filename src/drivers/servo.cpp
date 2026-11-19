@@ -13,16 +13,17 @@
 
 #define ENABLE_DEBUG_OUTPUT // comment out to suppress debug level dumps
 
-Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(const uint8_t addr)
-    : _i2caddr(addr) {}
+Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(I2cBus& bus, const uint8_t addr)
+    : bus_(bus), _i2caddr(addr) {}
 
 bool Adafruit_PWMServoDriver::begin(uint8_t prescale) {
-    fd = wiringPiI2CSetup(_i2caddr);
-    if (fd < 0) {
+    begun_ = false;
+    if (!bus_.is_ready() || !bus_.attach(_i2caddr)) {
         std::cerr << "Failed to initialize I2C communication." << std::endl;
         return false;
     }
 
+    begun_ = true;
     std::cout << "I2C communication initialized successfully." << std::endl;
     reset();
     if (prescale) {
@@ -35,7 +36,7 @@ bool Adafruit_PWMServoDriver::begin(uint8_t prescale) {
 }
 
 bool Adafruit_PWMServoDriver::is_ready() const {
-    return fd >= 0;
+    return begun_ && bus_.is_ready();
 }
 
 void Adafruit_PWMServoDriver::reset() {
@@ -174,6 +175,7 @@ void Adafruit_PWMServoDriver::setPWM(uint8_t num, uint16_t on, uint16_t off) {
               << std::endl;
 #endif
     uint8_t channel_base_reg = PCA9685_LED0_ON_L + 4 * num;
+    std::lock_guard<std::mutex> lock(channel_mutex_);
     write8(channel_base_reg, static_cast<uint8_t>(on & 0xFF));
     write8(channel_base_reg + 1, on >> 8);
     write8(channel_base_reg + 2, static_cast<uint8_t>(off & 0xFF));
@@ -248,6 +250,50 @@ bool Adafruit_PWMServoDriver::disablePWM(uint8_t num) {
     return true;
 }
 
+bool Adafruit_PWMServoDriver::read_channel(uint8_t num, PwmChannelReadback& readback) {
+    if (num > 15 || !is_ready()) {
+        return false;
+    }
+    const uint8_t base = PCA9685_LED0_ON_L + 4 * num;
+    uint8_t on_l = 0, on_h = 0, off_l = 0, off_h = 0;
+    {
+        std::lock_guard<std::mutex> lock(channel_mutex_);
+        if (!bus_.read_reg8(_i2caddr, base, on_l) || !bus_.read_reg8(_i2caddr, base + 1, on_h) ||
+            !bus_.read_reg8(_i2caddr, base + 2, off_l) || !bus_.read_reg8(_i2caddr, base + 3, off_h)) {
+            return false;
+        }
+    }
+
+    readback = PwmChannelReadback{};
+    // Bit 4 of a high byte is the "full" bit; full off wins over full on.
+    if (off_h & 0x10) {
+        readback.output = PwmOutput::Off;
+        return true;
+    }
+    if (on_h & 0x10) {
+        readback.output = PwmOutput::On;
+        return true;
+    }
+    const unsigned on = ((on_h & 0x0F) << 8) | on_l;
+    const unsigned off = ((off_h & 0x0F) << 8) | off_l;
+    const unsigned ticks = (off + 4096 - on) & 0x0FFF;
+    if (ticks == 0) {
+        readback.output = PwmOutput::Off;
+        return true;
+    }
+
+    uint8_t prescale = 0;
+    if (!bus_.read_reg8(_i2caddr, PCA9685_PRESCALE, prescale)) {
+        return false;
+    }
+    // The same conversion writeMicroseconds() uses, the other way round.
+    const double us_per_tick = 1000000.0 * (prescale + 1) / _oscillator_freq;
+    const double us = ticks * us_per_tick;
+    readback.output = PwmOutput::Pulse;
+    readback.microseconds = static_cast<uint16_t>(std::min(us + 0.5, 65535.0));
+    return true;
+}
+
 uint32_t Adafruit_PWMServoDriver::getOscillatorFrequency(void) {
     return _oscillator_freq;
 }
@@ -257,21 +303,21 @@ void Adafruit_PWMServoDriver::setOscillatorFrequency(uint32_t freq) {
 }
 
 uint8_t Adafruit_PWMServoDriver::read8(uint8_t addr) {
-    if (fd < 0) {
+    if (!begun_) {
         return 0;
     }
-    int value = wiringPiI2CReadReg8(fd, addr);
-    if (value < 0) {
+    uint8_t value = 0;
+    if (!bus_.read_reg8(_i2caddr, addr, value)) {
         return 0;
     }
-    return static_cast<uint8_t>(value);
+    return value;
 }
 
 void Adafruit_PWMServoDriver::write8(uint8_t addr, uint8_t d) {
-    if (fd < 0) {
+    if (!begun_) {
         return;
     }
-    wiringPiI2CWriteReg8(fd, addr, d);
+    bus_.write_reg8(_i2caddr, addr, d);
 }
 
 void Adafruit_PWMServoDriver::delay(int ms) {

@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+# End to end on the real application with simulated hardware: novaMock against a
+# private broker. Checks that telemetry carries the scenario's values and that a
+# data-saving command records them to CSV.
+#
+# Sandbox: the broker listens on loopback on a free port and is never 1883; 
+# everything novaMock writes goes under a scratch directory; 
+# the "backend" is a closed port, so nothing is uploaded anywhere.
+set -euo pipefail
+
+NOVAMOCK="${1:?usage: novamock_smoke.sh <path to novaMock>}"
+# Meson passes a path relative to the build dir, and we cd away from it below.
+NOVAMOCK="$(realpath -- "$NOVAMOCK")"
+WORK="$(mktemp -d)"
+PIDS=()
+
+cleanup() {
+  for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
+  wait 2>/dev/null || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+fail() { echo "FAIL: $*" >&2; [[ -f "$WORK/novamock.log" ]] && sed 's/^/  novaMock: /' "$WORK/novamock.log" >&2; exit 1; }
+
+PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+case "$PORT" in
+  1883|8000|8001|3000|3001|8080|8081) echo "refusing protected port $PORT" >&2; exit 2 ;;
+esac
+
+printf 'listener %s 127.0.0.1\nallow_anonymous true\n' "$PORT" > "$WORK/mosquitto.conf"
+mosquitto -c "$WORK/mosquitto.conf" > "$WORK/mosquitto.log" 2>&1 &
+PIDS+=($!)
+for _ in $(seq 50); do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then break; fi
+  sleep 0.1
+done
+
+# One MCC 128 with a flat 2.5 V on channel 3, and GPIO input 5 held high.
+cat > "$WORK/scenario.json" <<'EOF'
+{"hats":[{"address":0,"type":"mcc128","channels":{"3":{"wave":"flat","value":2.5}}}],
+ "gpio_inputs":{"5":1}}
+EOF
+
+mkdir "$WORK/run"
+cd "$WORK/run"   # novaMock records to ./data
+NOVA_ENV=dev \
+NOVA_STATE_DIR="$WORK/state" \
+NOVA_SIM_SCENARIO="$WORK/scenario.json" \
+  "$NOVAMOCK" --broker "127.0.0.1:$PORT" --backend "http://127.0.0.1:9" \
+              --sample-ms 20 --publish-ms 50 --stats on --stats-ms 500 \
+              > "$WORK/novamock.log" 2>&1 &
+PIDS+=($!)
+
+# 1. Telemetry with the scenario's sensor value and GPIO input arrives.
+cat > "$WORK/check_telemetry.py" <<'EOF'
+import json, sys
+for line in sys.stdin:
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    sensors = {(s["hat_id"], s["channel_id"]): s["value"] for s in msg.get("sensors", [])}
+    gpios = {g["pin_id"]: g["state"] for g in msg.get("gpios", [])}
+    if sensors.get((0, 3)) == 2.5 and gpios.get(5) == 1:
+        sys.exit(0)
+sys.exit(1)
+EOF
+python3 "$WORK/check_telemetry.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/telemetry/engine -W 20) \
+  || fail "no telemetry with hat 0 channel 3 = 2.5 and GPIO 5 = 1"
+echo "ok: telemetry carries the scenario values"
+
+# 2. A data-saving command reaches the logger, which records the sampled rows.
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+  -m '{"source":"novaOps","command":{"type":"data_file","action":"start_data_saving","filename":"smoke"}}'
+sleep 1
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+  -m '{"source":"novaOps","command":{"type":"data_file","action":"stop_data_saving"}}'
+
+CSV="$WORK/run/data/novaMock_smoke_sensors.csv"
+for _ in $(seq 50); do [[ -f "$WORK/state/last_upload.json" ]] && break; sleep 0.1; done
+[[ -f "$CSV" ]] || fail "no sensor CSV at $CSV"
+[[ "$(head -n 1 "$CSV")" == "timestamp,hat0_ch0,hat0_ch1,hat0_ch2,hat0_ch3,hat0_ch4,hat0_ch5,hat0_ch6,hat0_ch7" ]] \
+  || fail "unexpected CSV header: $(head -n 1 "$CSV")"
+[[ "$(wc -l < "$CSV")" -ge 3 ]] || fail "expected at least two data rows in $CSV"
+ROW="$(sed -n 2p "$CSV")"
+[[ "$(cut -d, -f5 <<<"$ROW")" == "2.5" ]] || fail "hat0_ch3 should be 2.5 in row: $ROW"
+echo "ok: the command recorded the sampled rows"
+
+# 3. The upload to the unreachable backend was attempted and reported as failed.
+[[ -f "$WORK/state/last_upload.json" ]] || fail "no last_upload.json was written"
+python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); sys.exit(0 if d.get("ok") is False else 1)' \
+  "$WORK/state/last_upload.json" || fail "last_upload.json should report a failed upload: $(cat "$WORK/state/last_upload.json")"
+echo "ok: the failed upload was reported"
+
+# Drive one of each actuator, for the state read-back checked below.
+for c in '{"type":"relay","id":3,"state":false}' \
+         '{"type":"servo","id":2,"angle":1500}' \
+         '{"type":"gpio","id":17,"state":true}'; do
+  mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+    -m "{\"source\":\"novaOps\",\"command\":$c}"
+done
+
+# 4. With --stats on (this run), telemetry carries seq and timestamps and the
+# stats topic reports the loops and the two commands above.
+cat > "$WORK/check_seq.py" <<'EOF'
+import json, sys
+seqs = []
+for line in sys.stdin:
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    if "seq" not in msg or "publish_ms" not in msg or "sample_ms" not in msg:
+        sys.exit("telemetry packet without seq/sample_ms/publish_ms: " + line)
+    if msg["sample_ms"] > msg["publish_ms"]:
+        sys.exit("sample_ms is after publish_ms: " + line)
+    seqs.append(msg["seq"])
+if len(seqs) < 3 or seqs != sorted(seqs) or len(set(seqs)) != len(seqs):
+    sys.exit("seq should be strictly increasing, got %r" % seqs)
+EOF
+python3 "$WORK/check_seq.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/telemetry/engine -W 2) \
+  || fail "telemetry seq and timestamps"
+echo "ok: telemetry carries seq and timestamps with --stats on"
+
+# The stats message: measurements only, at the interval --stats-ms
+# asked for (500 ms), with the loops and the two commands above.
+cat > "$WORK/check_stats.py" <<'EOF'
+import json, sys
+msgs = [json.loads(line) for line in sys.stdin if line.strip()]
+if len(msgs) < 2:
+    sys.exit("expected two stats messages, got %d" % len(msgs))
+msg = msgs[-1]
+if msgs[1]["seq"] != msgs[0]["seq"] + 1:
+    sys.exit("stats seq should step by one: %r %r" % (msgs[0]["seq"], msgs[1]["seq"]))
+gap = msgs[1]["time_ms"] - msgs[0]["time_ms"]
+if not 350 <= gap <= 800:
+    sys.exit("--stats-ms 500 but the messages are %d ms apart" % gap)
+loops = msg["loops"]
+for name in ("sampler", "publisher", "gpio_sampler"):
+    if name not in loops:
+        sys.exit("no %s loop in %r" % (name, sorted(loops)))
+if "consumer" in loops:
+    sys.exit("the consumer waits on the broker; it has no period to report")
+sampler = loops["sampler"]
+if sampler["ticks"] < 2 or sampler["period_ms"]["total"]["count"] < 1 or "configured_ms" in sampler:
+    sys.exit("sampler: %r" % sampler)
+cmd = msg["commands"].get("data_file")
+if not cmd or cmd["count"] != 2:
+    sys.exit("expected 2 data_file commands, got %r" % cmd)
+done, handled = cmd["received_to_done_ms"]["total"], cmd["received_to_handled_ms"]["total"]
+if done["count"] != 2 or done["max"] < handled["max"]:
+    sys.exit("done must not be before handled: %r" % cmd)
+EOF
+python3 "$WORK/check_stats.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock -W 5 -C 2) \
+  || fail "stats message"
+echo "ok: nova/stats/novaMock is measurements only, at the configured interval"
+
+# The info message is retained: a subscriber that arrives now gets it at once,
+# with the identity and the loops' configured periods.
+cat > "$WORK/check_info.py" <<'EOF'
+import json, sys
+info = json.loads(sys.stdin.readline())
+if "node" in info:
+    sys.exit("the topic names the node; it is not a field")
+for key in ("env", "git_commit"):
+    if key in info:
+        sys.exit("%r is not part of the info message: %r" % (key, info))
+if info["build_id"] != "novaMock":
+    sys.exit("build_id: %r" % info)
+if info["actuation"] != "enabled":
+    sys.exit("actuation: %r" % info)
+if info["stats_interval_ms"] != 500:
+    sys.exit("stats_interval_ms: %r" % info)
+cfg = {name: l["configured_ms"] for name, l in info["loops"].items()}
+if cfg != {"sampler": 20, "publisher": 50, "gpio_sampler": 50}:
+    sys.exit("configured loops: %r" % cfg)
+if info["started_ms"] < 1e12:
+    sys.exit("started_ms: %r" % info["started_ms"])
+EOF
+python3 "$WORK/check_info.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock/info --retained-only -W 5 -C 1) \
+  || fail "retained info message"
+echo "ok: nova/stats/novaMock/info is retained, with the identity and loop periods"
+
+# The actuator state, read back from the (simulated) drivers: retained, so a
+# subscriber that arrives now gets it at once. Relay 3 is off, the rest on;
+# servo 2 pulses 1500 us, the others are off; GPIO 17 is high, the others low.
+cat > "$WORK/check_state.py" <<'EOF'
+import json, sys
+msg = json.loads(sys.stdin.readline())
+if msg["relays"] != {"ok": True, "mask": 0xFFFF & ~(1 << 3)}:
+    sys.exit("relays: %r" % msg["relays"])
+servos = msg["servos"]
+if not servos["ok"] or len(servos["channels"]) != 16:
+    sys.exit("servos: %r" % servos)
+for ch in servos["channels"]:
+    if ch["id"] == 2:
+        if ch["output"] != "pulse" or ch["pulse_us"] != 1500:
+            sys.exit("servo 2: %r" % ch)
+    elif ch["output"] != "off":
+        sys.exit("servo %d should be off: %r" % (ch["id"], ch))
+gpios = {g["pin_id"]: g["state"] for g in msg["gpios"]["outputs"]}
+if not msg["gpios"]["ok"] or gpios != {17: 1, 27: 0, 22: 0}:
+    sys.exit("gpios: %r" % msg["gpios"])
+if msg["time_ms"] < 1e12:
+    sys.exit("time_ms: %r" % msg["time_ms"])
+EOF
+python3 "$WORK/check_state.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/state/novaMock --retained-only -W 5 -C 1) \
+  || fail "retained actuator state"
+echo "ok: nova/state/novaMock is retained and matches what the commands did"
+
+# 5. With stats off, none of it appears: telemetry is as before and no stats
+# message is published. The flag here is malformed, which must be reported and
+# ignored, not stop the program.
+kill -TERM "${PIDS[1]}"
+RC=0
+wait "${PIDS[1]}" || RC=$?
+[[ "$RC" -eq 0 ]] || fail "SIGTERM should end novaMock cleanly (exit 0), it exited $RC"
+grep -q "Final stats: " "$WORK/novamock.log" || fail "no final stats line after SIGTERM"
+grep -q "Shutdown complete" "$WORK/novamock.log" || fail "novaMock did not finish its shutdown"
+echo "ok: SIGTERM stops novaMock cleanly, with a final stats line"
+NOVA_ENV=dev NOVA_STATE_DIR="$WORK/state2" NOVA_SIM_SCENARIO="$WORK/scenario.json" \
+  "$NOVAMOCK" --broker "127.0.0.1:$PORT" --backend "http://127.0.0.1:9" \
+              --sample-ms 20 --publish-ms 50 --stats maybe > "$WORK/novamock2.log" 2>&1 &
+PIDS+=($!)
+cat > "$WORK/check_no_stats.py" <<'EOF'
+import json, sys
+n = 0
+for line in sys.stdin:
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    n += 1
+    extra = {"seq", "sample_ms", "publish_ms"} & set(msg)
+    if extra:
+        sys.exit("stats are off but telemetry has %r" % sorted(extra))
+if n == 0:
+    sys.exit("no telemetry from the second run")
+EOF
+python3 "$WORK/check_no_stats.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/telemetry/engine -W 3) \
+  || fail "telemetry should be unchanged with stats off"
+[[ -z "$(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock -W 2 -C 1 || true)" ]] \
+  || fail "a stats message was published with stats off"
+# (The first run's retained info message is still on the broker, so the info
+# topic can't show this; the stats topic can.)
+grep -q "Invalid --stats value 'maybe'" "$WORK/novamock2.log" || fail "no warning for --stats maybe"
+echo "ok: a malformed --stats is reported and ignored, and nothing extra is published"
+
+# 6. --stop-actuate: commands travel the whole path and are counted and timed,
+# but no output is written. The state read back from the (simulated) drivers
+# still says every relay is on, every servo off and every GPIO low, and the stats
+# say writes were stopped. The second run is stopped first: both use the same
+# MQTT client ID.
+kill -TERM "${PIDS[2]}"
+RC=0
+wait "${PIDS[2]}" || RC=$?
+[[ "$RC" -eq 0 ]] || fail "SIGTERM should end the second run cleanly, it exited $RC"
+NOVA_ENV=dev NOVA_STATE_DIR="$WORK/state3" NOVA_SIM_SCENARIO="$WORK/scenario.json" \
+  "$NOVAMOCK" --broker "127.0.0.1:$PORT" --backend "http://127.0.0.1:9" \
+              --sample-ms 20 --publish-ms 50 --stats on --stats-ms 300 --stop-actuate \
+              > "$WORK/novamock3.log" 2>&1 &
+PIDS+=($!)
+for _ in $(seq 100); do grep -q "Subscribed to nova/command" "$WORK/novamock3.log" && break; sleep 0.1; done
+grep -q "Actuation: STOPPED" "$WORK/novamock3.log" || fail "no warning that actuation is stopped"
+
+for c in '{"type":"relay","id":3,"state":false}' \
+         '{"type":"servo","id":2,"angle":1500}' \
+         '{"type":"gpio","id":17,"state":true}'; do
+  mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+    -m "{\"source\":\"novaOps\",\"command\":$c}"
+done
+sleep 1
+
+cat > "$WORK/check_stopped_info.py" <<'EOF'
+import json, sys
+# The first run's retained message may arrive first; this run's replaces it.
+infos = [json.loads(line) for line in sys.stdin if line.strip()]
+if not infos or infos[-1].get("actuation") != "stopped":
+    sys.exit("the info message should announce actuation: stopped, got %r" % infos[-1:])
+EOF
+python3 "$WORK/check_stopped_info.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock/info -W 2) \
+  || fail "info message with --stop-actuate"
+echo "ok: the info message announces actuation: stopped"
+
+cat > "$WORK/check_stopped_stats.py" <<'EOF'
+import json, sys
+msgs = [json.loads(line) for line in sys.stdin if line.strip()]
+if not msgs:
+    sys.exit("no stats message")
+msg = msgs[-1]
+for kind in ("relay", "servo", "gpio"):
+    cmd = msg["commands"].get(kind)
+    if not cmd or cmd["count"] != 1 or cmd["received_to_done_ms"]["total"]["count"] != 1:
+        sys.exit("the %s command should have been counted and timed: %r" % (kind, cmd))
+if msg["stopped_writes"] != 3:
+    sys.exit("expected 3 stopped writes (relay, servo, gpio), got %r" % msg["stopped_writes"])
+EOF
+python3 "$WORK/check_stopped_stats.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock -W 2) \
+  || fail "stats with --stop-actuate"
+echo "ok: the commands were counted and timed, and their writes were stopped"
+
+cat > "$WORK/check_unmoved.py" <<'EOF'
+import json, sys
+msgs = [json.loads(line) for line in sys.stdin if line.strip()]
+if not msgs:
+    sys.exit("no state message")
+msg = msgs[-1]   # the retained one from the first run, if any, comes first
+if msg["relays"] != {"ok": True, "mask": 0xFFFF}:
+    sys.exit("a relay moved: %r" % msg["relays"])
+for ch in msg["servos"]["channels"]:
+    if ch["output"] != "off":
+        sys.exit("a servo moved: %r" % ch)
+gpios = {g["pin_id"]: g["state"] for g in msg["gpios"]["outputs"]}
+if gpios != {17: 0, 27: 0, 22: 0}:
+    sys.exit("a GPIO moved: %r" % gpios)
+EOF
+python3 "$WORK/check_unmoved.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/state/novaMock -W 2) \
+  || fail "the read-back state should show nothing moved"
+echo "ok: the drivers' read-back shows no output moved"
+
+kill -TERM "${PIDS[3]}"
+RC=0
+wait "${PIDS[3]}" || RC=$?
+[[ "$RC" -eq 0 ]] || fail "SIGTERM should end the --stop-actuate run cleanly, it exited $RC"
+grep -q "Shutdown complete" "$WORK/novamock3.log" || fail "the --stop-actuate run did not finish its shutdown"
+echo "ok: --stop-actuate drops the writes, keeps the path, and shuts down cleanly"

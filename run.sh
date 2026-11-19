@@ -12,9 +12,13 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Tests set NOVA_PI_ROOT to a scratch directory; on a Pi it is empty.
+ROOT="${NOVA_PI_ROOT:-}"
 ENVIRONMENT="dev"
 TARGET=""; BROKER=""; BACKEND=""
 KILL_SESSION="false"
+# Everything after `--`, passed to the binary as it is.
+PASSTHRU=()
 
 print_help() {
   cat <<'EOF'
@@ -27,6 +31,10 @@ Options:
   --backend <host:port>  novaOps backend      (default: from the env file)
   --kill                 Kill the bench session and exit
   -h, --help             Show this help
+  -- <args>              Everything after -- goes to the binary, after the
+                         settings and so overriding them, e.g.
+                           ./run.sh --env dev -- --stop-actuate
+                         --stop-actuate needs NOVA_BENCH_FLAGS on in the env file.
 
 Detach from the session with Ctrl+B then D. Reattach with:
   tmux attach -t NovaGround-<env>
@@ -40,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --broker)   BROKER="$2"; shift 2 ;;
     --backend)  BACKEND="$2"; shift 2 ;;
     --kill)     KILL_SESSION="true"; shift ;;
+    --)         shift; PASSTHRU=("$@"); break ;;
     -h|--help)  print_help; exit 0 ;;
     *)          echo "Unknown argument: $1"; print_help; exit 1 ;;
   esac
@@ -60,9 +69,9 @@ if [[ "$ENVIRONMENT" != "prod" && "$ENVIRONMENT" != "dev" ]]; then
 fi
 SESSION="NovaGround-${ENVIRONMENT}"
 
-ENV_FILE="/etc/nova/novaGround-${ENVIRONMENT}.env"
+ENV_FILE="${ROOT}/etc/nova/novaGround-${ENVIRONMENT}.env"
 # shellcheck disable=SC1091
-[[ -f /etc/nova/pi.env ]] && source /etc/nova/pi.env
+[[ -f "${ROOT}/etc/nova/pi.env" ]] && source "${ROOT}/etc/nova/pi.env"
 # shellcheck disable=SC1090
 [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
 
@@ -96,7 +105,30 @@ for e in prod dev; do
   fi
 done
 
-CMD="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=/var/lib/nova/${ENVIRONMENT} ${BIN} --broker ${BROKER} --backend ${BACKEND} ${NOVA_EXTRA_ARGS:-}"
+# The same flags the service passes (nova-args.sh); --broker and --backend
+# above win over the env file for this one run.
+# shellcheck source=nova-args.sh
+source "${HERE}/nova-args.sh"
+build_args "$BROKER" "$BACKEND"
+# Last, so they win over the settings, the way the binary reads repeated flags.
+[[ ${#PASSTHRU[@]} -gt 0 ]] && ARGS+=("${PASSTHRU[@]}")
+check_bench_flags "$ENVIRONMENT" || exit 1
+printf -v ARGS_TEXT '%q ' "${ARGS[@]}"
+
+# The binary reads these from its environment, and tmux starts a fresh shell,
+# so they go on the command line.
+ENV_TEXT="NOVA_ENV=${ENVIRONMENT} NOVA_STATE_DIR=${NOVA_STATE_DIR:-/var/lib/nova/${ENVIRONMENT}}"
+[[ -n "${NOVA_SIM_SCENARIO:-}" ]] && printf -v ENV_TEXT '%s NOVA_SIM_SCENARIO=%q' "$ENV_TEXT" "$NOVA_SIM_SCENARIO"
+CMD="${ENV_TEXT} ${BIN} ${ARGS_TEXT}"
+
+# An existing session keeps running what it was started with, so flags given now
+# would be ignored without a word, and a bench run that thinks it has
+# --stop-actuate must not be wrong about it.
+if [[ ${#PASSTHRU[@]} -gt 0 ]] && tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "Session $SESSION is already running, so these flags would not apply: ${PASSTHRU[*]}" >&2
+  echo "Stop it first with ./run.sh --kill, then start it again." >&2
+  exit 1
+fi
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   tmux new-session -d -s "$SESSION"
