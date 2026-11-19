@@ -401,7 +401,11 @@ do_build() {
   fi
   as_owner "$dir" meson compile -C "${dir}/build" || { err "build failed"; exit 1; }
   ok "Build complete."
-  ls -1 "${dir}/build/" 2>/dev/null | grep -E '^nova' | sed 's/^/    /'
+  local f
+  for f in "${dir}/build/"nova*; do
+    [[ -e "$f" ]] && echo "    ${f##*/}"
+  done
+  return 0
 }
 
 do_install() {

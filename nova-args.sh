@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by start.sh and run.sh (not run on its own): turns the NOVA_*
 # settings in the environment into the binary's command line, so the service
 # and a bench session pass exactly the same flags.

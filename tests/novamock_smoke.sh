@@ -9,6 +9,8 @@
 set -euo pipefail
 
 NOVAMOCK="${1:?usage: novamock_smoke.sh <path to novaMock>}"
+# Meson passes a path relative to the build dir, and we cd away from it below.
+NOVAMOCK="$(realpath -- "$NOVAMOCK")"
 WORK="$(mktemp -d)"
 PIDS=()
 
