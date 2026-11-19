@@ -131,6 +131,9 @@ struct StatsIdentity {
     std::string node;       // the MQTT node id (novaGround, novaThermo, novaMock); names the topic
     std::string build_id;
     int interval_ms = 1000;  // how often the stats message is published
+    // "enabled": commands drive the outputs. "stopped": --stop-actuate, every
+    // output write is dropped (core/actuation_guard.hpp).
+    std::string actuation = "enabled";
 };
 
 class StatsRegistry {
@@ -160,6 +163,8 @@ public:
     void count_daq_read_errors(std::uint64_t n);
     // Actuator read-backs (relay, servo channel, GPIO) that failed.
     void count_actuator_read_errors(std::uint64_t n);
+    // An output write (or direction change) that --stop-actuate dropped.
+    void count_stopped_write();
 
     // The retained info message, as JSON text.
     std::string identity_json();
@@ -186,6 +191,7 @@ private:
     std::uint64_t publish_failures_ = 0;
     std::uint64_t daq_read_errors_ = 0;
     std::uint64_t actuator_read_errors_ = 0;
+    std::uint64_t stopped_writes_ = 0;
     std::uint64_t stats_seq_ = 0;
 
     std::mutex seq_mutex_;

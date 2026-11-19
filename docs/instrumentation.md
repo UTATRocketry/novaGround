@@ -49,6 +49,7 @@ soon as it subscribes. It describes the process, not the last second:
   "build_id": "novaGround",
   "started_ms": 1793000000000,
   "stats_interval_ms": 1000,
+  "actuation": "enabled",
   "loops": {
     "gpio_sampler": { "configured_ms": 50 },
     "publisher":    { "configured_ms": 50 },
@@ -59,10 +60,14 @@ soon as it subscribes. It describes the process, not the last second:
 }
 ```
 
-- **No settings yet.** The message deliberately does not list the environment,
-  the commit the binary was built from, or the actuation mode. The Pi report
-  already says which environment is running, and the others have no use yet.
-  It could grow into a record of every setting the program runs with.
+- **`actuation`** is `enabled`, or `stopped` when the program was started with
+  `--stop-actuate`, which drops every output write (see
+  [bench-safety.md](bench-safety.md)). A bench script checks it before it sends a
+  command.
+- **No other settings yet.** The message deliberately does not list the
+  environment or the commit the binary was built from. The Pi report already says
+  which environment is running, and the commit has no use yet. It could grow into
+  a record of every setting the program runs with.
 - **`started_ms`** (system clock) tells a new run from an old retained message:
   the broker keeps the last info message after the process dies, and a run with
   `NOVA_STATS` off publishes none and does not clear it.
@@ -86,7 +91,9 @@ soon as it subscribes. It describes the process, not the last second:
                "received_to_done_ms":    { "last": { "...": 0 }, "total": { "...": 0 } } }
   },
   "publish_failures": 0,
-  "daq_read_errors": 0
+  "daq_read_errors": 0,
+  "actuator_read_errors": 0,
+  "stopped_writes": 0
 }
 ```
 
@@ -115,7 +122,8 @@ soon as it subscribes. It describes the process, not the last second:
     hardware unavailable) are counted too: they did reach their handler.
 - **`publish_failures`**: telemetry publishes that threw. **`daq_read_errors`**:
   channel reads that failed (published as NaN). **`actuator_read_errors`**:
-  actuator read-backs that failed (see below).
+  actuator read-backs that failed (see below). **`stopped_writes`**: output
+  writes that `--stop-actuate` dropped, since the start (always 0 otherwise).
 
 ## Actuator state (`nova/state/<node>`)
 

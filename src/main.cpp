@@ -1,5 +1,7 @@
 ﻿#include "mqtt/async_client.h"
 
+#include <signal.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -15,6 +17,7 @@
 #include "controllers/relay_controller.hpp"
 #include "controllers/sampler.hpp"
 #include "controllers/servo_controller.hpp"
+#include "core/actuation_guard.hpp"
 #include "core/actuator_state.hpp"
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
@@ -63,6 +66,11 @@ struct App {
     std::vector<unsigned int> output_pins = {17, 27, 22};
     std::vector<unsigned int> input_pins = {5, 6};
     Hardware hardware;
+    // --stop-actuate: the drivers the controllers write through. Declared after
+    // `hardware`, which they wrap, and before the controllers that use them.
+    std::unique_ptr<StoppedRelayBank> stopped_relays;
+    std::unique_ptr<StoppedPwmDriver> stopped_servo;
+    std::unique_ptr<StoppedDigitalIo> stopped_gpio;
 
     std::unique_ptr<DataLogger> logger;
     std::unique_ptr<ServoController> servo_controller;
@@ -113,6 +121,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     identity.node = config.node_id;
     identity.build_id = NOVA_BUILD_ID;
     identity.interval_ms = stats_interval_ms;
+    identity.actuation = config.stop_actuate ? "stopped" : "enabled";
     app->stats = std::make_unique<StatsRegistry>(std::move(identity), stats_on);
     if (stats_on) {
         std::cout << "Stats: on, every " << stats_interval_ms << " ms to " << stats_topic(config.node_id)
@@ -121,6 +130,11 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
                   << "; seq and timestamps in telemetry" << std::endl;
     } else {
         std::cout << "Stats: off" << std::endl;
+    }
+    if (config.stop_actuate) {
+        // On stderr so --verbosity 0 does not hide it.
+        std::cerr << "Actuation: STOPPED (--stop-actuate). Commands are checked, routed and timed, but no\n"
+                  << "output is written. Outputs are still set up at startup, as always." << std::endl;
     }
     std::cout << "Broker: " << broker_address << std::endl;
     std::cout << "Backend: " << backend_base << "  (uploads to " << app->upload_url << ")" << std::endl;
@@ -163,12 +177,33 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
         app->stats->loop("gpio_sampler", kGpioSampleIntervalMs);
     }
 
-    app->servo_controller = std::make_unique<ServoController>(hw.servo.get(), &app->telemetry, app->logger.get());
-    app->relay_controller = std::make_unique<RelayController>(hw.relays.get(), &app->telemetry, app->logger.get());
+    // What the controllers write through: the drivers themselves, or, with
+    // --stop-actuate, wrappers that drop every write. Reads (the state topic,
+    // the samplers) always go to the real drivers.
+    PwmDriver* servo_out = hw.servo.get();
+    RelayBank* relays_out = hw.relays.get();
+    DigitalIo* gpio_out = hw.gpio.get();
+    if (config.stop_actuate) {
+        if (hw.servo) {
+            app->stopped_servo = std::make_unique<StoppedPwmDriver>(*hw.servo, app->stats.get());
+            servo_out = app->stopped_servo.get();
+        }
+        if (hw.relays) {
+            app->stopped_relays = std::make_unique<StoppedRelayBank>(*hw.relays, app->stats.get());
+            relays_out = app->stopped_relays.get();
+        }
+        if (hw.gpio) {
+            app->stopped_gpio = std::make_unique<StoppedDigitalIo>(*hw.gpio, app->stats.get());
+            gpio_out = app->stopped_gpio.get();
+        }
+    }
+
+    app->servo_controller = std::make_unique<ServoController>(servo_out, &app->telemetry, app->logger.get());
+    app->relay_controller = std::make_unique<RelayController>(relays_out, &app->telemetry, app->logger.get());
     if (hw.relays) {
         app->relay_controller->set_initial_state(hw.relay_state);
     }
-    app->gpio_controller = std::make_unique<GpioController>(hw.gpio.get(), app->logger.get());
+    app->gpio_controller = std::make_unique<GpioController>(gpio_out, app->logger.get());
     app->data_file_controller = std::make_unique<DataFileController>(app->logger.get(), app->upload_url);
 
     app->router = std::make_unique<CommandRouter>(kCommandSourceId);
@@ -299,6 +334,37 @@ void run(App& app, std::stop_token stop) {
     while (!sleeper.sleep_for(stop, seconds(1))) {
     }
 }
+
+// What is left to do once the loops have stopped and been joined. Writes no
+// output: the valves and relays stay as they are, which is the safe state for a
+// process that is only being restarted.
+void finish(App& app) {
+    // The last stats window, in the log and (if the broker is there) on the topic.
+    if (app.stats->enabled()) {
+        const std::string last = app.stats->take_stats_json();
+        std::cout << "Final stats: " << last << std::endl;
+        try {
+            if (app.cli && app.cli->is_connected()) {
+                app.cli->publish(stats_topic(app.config.node_id), last, 1, false)->wait_for(seconds(2));
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Final stats publish failed: " << e.what() << std::endl;
+        }
+    }
+
+    // Close the recording, so no file is left half written.
+    app.logger->stop();
+
+    try {
+        if (app.cli && app.cli->is_connected()) {
+            app.cli->stop_consuming();
+            app.cli->disconnect()->wait_for(seconds(2));
+            std::cout << "Disconnected from MQTT broker" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "MQTT disconnect failed: " << e.what() << std::endl;
+    }
+}
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -323,9 +389,34 @@ int main(int argc, char* argv[]) {
         std::cout.setstate(std::ios::failbit);
     }
 
-    auto app = build_app(parsed.config);
+    // SIGINT, SIGTERM and SIGHUP (systemctl stop, Ctrl+C, and tmux killing the
+    // session, which is what run.sh --kill does) are blocked here, before any
+    // thread exists so all of them inherit it, and one thread waits for them:
+    // a handler could not safely do what stopping needs. It is detached, so
+    // that an exception out of build_app does not leave main joining a thread
+    // that waits for a signal.
+    sigset_t signals;
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGINT);
+    sigaddset(&signals, SIGTERM);
+    sigaddset(&signals, SIGHUP);
+    pthread_sigmask(SIG_BLOCK, &signals, nullptr);
 
     std::stop_source stop;
+    std::thread([signals, stop]() mutable {
+        int received = 0;
+        if (sigwait(&signals, &received) == 0) {
+            std::cerr << "Received signal " << received << ", shutting down." << std::endl;
+            stop.request_stop();
+        }
+    }).detach();
+
+    auto app = build_app(parsed.config);
+
     run(*app, stop.get_token());
+    finish(*app);
+    // Destroys the controllers, the logger and the drivers, in that order.
+    app.reset();
+    std::cout << "Shutdown complete." << std::endl;
     return 0;
 }

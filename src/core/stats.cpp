@@ -229,12 +229,21 @@ void StatsRegistry::count_actuator_read_errors(std::uint64_t n) {
     actuator_read_errors_ += n;
 }
 
+void StatsRegistry::count_stopped_write() {
+    if (!enabled_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++stopped_writes_;
+}
+
 std::string StatsRegistry::identity_json() {
     json::object root;
     root["schema"] = kSchema;
     root["build_id"] = identity_.build_id;
     root["started_ms"] = started_ms_;
     root["stats_interval_ms"] = identity_.interval_ms;
+    root["actuation"] = identity_.actuation;
 
     json::object loops;
     {
@@ -289,5 +298,6 @@ std::string StatsRegistry::take_stats_json() {
     root["publish_failures"] = publish_failures_;
     root["daq_read_errors"] = daq_read_errors_;
     root["actuator_read_errors"] = actuator_read_errors_;
+    root["stopped_writes"] = stopped_writes_;
     return json::serialize(root);
 }

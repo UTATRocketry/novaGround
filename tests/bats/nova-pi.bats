@@ -62,7 +62,7 @@ teardown() { teardown_sandbox; }
 
 @test "configure can set every setting, and lists the ones it leaves empty" {
   run "$NP" configure --env dev --broker pc:1884 --backend pc:8001 --console pc \
-    --verbosity 2 --sample-ms 20 --publish-ms 100 --stats on --stats-ms 500 \
+    --verbosity 2 --sample-ms 20 --publish-ms 100 --stats on --stats-ms 500 --bench-flags on \
     --sim-scenario /srv/run.json --state-dir /srv/nova --extra-args "--publish-ms 80"
   [ "$status" -eq 0 ]
   f="$NOVA_PI_ROOT/etc/nova/novaGround-dev.env"
@@ -72,11 +72,13 @@ teardown() { teardown_sandbox; }
   grep -qx 'NOVA_PUBLISH_MS=100' "$f"
   grep -qx 'NOVA_STATS=on' "$f"
   grep -qx 'NOVA_STATS_MS=500' "$f"
+  grep -qx 'NOVA_BENCH_FLAGS=on' "$f"
   grep -qx 'NOVA_SIM_SCENARIO=/srv/run.json' "$f"
   grep -qx 'NOVA_STATE_DIR=/srv/nova' "$f"
   grep -qx 'NOVA_EXTRA_ARGS="--publish-ms 80"' "$f"
   run "$NP" configure --env prod --broker pc:1883 --backend pc:8000
   grep -qx '#NOVA_STATS_MS=' "$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
+  grep -qx '#NOVA_BENCH_FLAGS=' "$NOVA_PI_ROOT/etc/nova/novaGround-prod.env"
 }
 
 @test "configure keeps the settings it is not given" {

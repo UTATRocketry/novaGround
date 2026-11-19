@@ -13,7 +13,7 @@ setup() {
   write_etc_nova pi.env NOVA_PI_NAME=NovaGround NOVA_TARGET=novaGround
   write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001
   write_etc_nova novaGround-prod.env NOVA_BROKER=pc:1883 NOVA_BACKEND=pc:8000
-  unset NOVA_EXTRA_ARGS NOVA_GLOBAL_ARGS NOVA_VERBOSITY NOVA_SAMPLE_MS NOVA_PUBLISH_MS NOVA_STATS NOVA_STATS_MS NOVA_SIM_SCENARIO NOVA_STATE_DIR NOVA_TARGET NOVA_BROKER NOVA_BACKEND
+  unset NOVA_BENCH_FLAGS NOVA_EXTRA_ARGS NOVA_GLOBAL_ARGS NOVA_VERBOSITY NOVA_SAMPLE_MS NOVA_PUBLISH_MS NOVA_STATS NOVA_STATS_MS NOVA_SIM_SCENARIO NOVA_STATE_DIR NOVA_TARGET NOVA_BROKER NOVA_BACKEND
 }
 
 teardown() { teardown_sandbox; }
@@ -135,4 +135,75 @@ teardown() { teardown_sandbox; }
   run "$CHECKOUT/run.sh"
   [ "$status" -eq 0 ]
   grep -q 'NOVA_ENV=dev NOVA_STATE_DIR=/srv/nova NOVA_SIM_SCENARIO=/srv/run.json .*/build/novaGround ' "$CALLS"
+}
+
+@test "-- passes the rest to the binary, after the settings" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_VERBOSITY=1 'NOVA_EXTRA_ARGS="--publish-ms 80"'
+  run "$CHECKOUT/run.sh" --env dev -- --verbosity 2 --publish-ms 20
+  [ "$status" -eq 0 ]
+  grep -q -- '--verbosity 1 --publish-ms 80 --verbosity 2 --publish-ms 20' "$CALLS"
+}
+
+@test "run.sh's own options still work before --" {
+  run "$CHECKOUT/run.sh" --broker other:1 -- --verbosity 2
+  [ "$status" -eq 0 ]
+  grep -q -- '--broker other:1 --backend pc:8001 --verbosity 2' "$CALLS"
+}
+
+@test "an argument after -- that run.sh knows is not read by run.sh" {
+  run "$CHECKOUT/run.sh" -- --kill
+  [ "$status" -eq 0 ]
+  grep -q 'new-session' "$CALLS"
+  grep -q -- '--kill' "$CALLS"
+}
+
+@test "arguments after -- keep their spacing" {
+  run "$CHECKOUT/run.sh" -- --sim-note "two words"
+  [ "$status" -eq 0 ]
+  grep -qF -- '--sim-note two\ words' "$CALLS"
+}
+
+@test "--stop-actuate is refused unless NOVA_BENCH_FLAGS is on" {
+  run "$CHECKOUT/run.sh" --env dev -- --stop-actuate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--stop-actuate is not allowed in the dev environment"* ]]
+  [[ "$output" == *"--bench-flags on"* ]]
+  ! grep -q 'new-session' "$CALLS"
+}
+
+@test "--stop-actuate is refused in prod while the setting is off there" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_BENCH_FLAGS=on
+  run "$CHECKOUT/run.sh" --env prod -- --stop-actuate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not allowed in the prod environment"* ]]
+  ! grep -q 'new-session' "$CALLS"
+}
+
+@test "--stop-actuate is passed when the environment's file turns NOVA_BENCH_FLAGS on" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_BENCH_FLAGS=on
+  run "$CHECKOUT/run.sh" --env dev -- --stop-actuate
+  [ "$status" -eq 0 ]
+  grep -q 'NOVA_ENV=dev .*/build/novaGround --broker pc:1884 --backend pc:8001 --stop-actuate' "$CALLS"
+}
+
+@test "--stop-actuate from NOVA_EXTRA_ARGS is refused the same way" {
+  write_etc_nova novaGround-dev.env NOVA_BROKER=pc:1884 NOVA_BACKEND=pc:8001 NOVA_EXTRA_ARGS=--stop-actuate
+  run "$CHECKOUT/run.sh"
+  [ "$status" -eq 1 ]
+  ! grep -q 'new-session' "$CALLS"
+}
+
+@test "flags after -- are refused, not dropped, when a session already exists" {
+  fake_session NovaGround-dev
+  run "$CHECKOUT/run.sh" -- --verbosity 2
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already running"* ]]
+  ! grep -q 'attach-session' "$CALLS"
+}
+
+@test "an existing session is still attached when no flags are given" {
+  fake_session NovaGround-dev
+  run "$CHECKOUT/run.sh" --
+  [ "$status" -eq 0 ]
+  grep -q 'attach-session' "$CALLS"
 }

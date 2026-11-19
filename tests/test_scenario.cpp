@@ -106,7 +106,7 @@ BOOST_AUTO_TEST_CASE(the_default_scenario_has_the_python_simulators_gcs_channels
     }
     BOOST_TEST(s.hats[1].address == 1);
     BOOST_TEST(s.hats[1].channels.count(1) == 1u);
-    BOOST_TEST(s.hats[0].channels.at(0).wave == "sine");
+    BOOST_TEST(s.hats[0].channels.at(0).wave == "flat");
 }
 
 BOOST_AUTO_TEST_SUITE_END()
