@@ -108,7 +108,13 @@ jobs:
     name: core tests (${{ matrix.arch }}, ${{ matrix.sanitizer }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
-    container: debian:bookworm
+    container:
+      image: debian:bookworm
+      # ThreadSanitizer needs ASLR off: the runners' kernels randomize more address
+      # bits than its memory layout allows ("unexpected memory mapping"). Turning it
+      # off takes personality(ADDR_NO_RANDOMIZE), which Docker's default seccomp
+      # profile blocks, so the thread jobs alone run without that profile.
+      options: ${{ matrix.sanitizer == 'thread' && '--security-opt seccomp=unconfined' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +144,7 @@ jobs:
 
       # paho and mosquitto are not built with ThreadSanitizer, so the novaMock
       # end-to-end test (suite "integration") runs in the other jobs only.
+      # setarch -R runs it with ASLR off (see the container options above).
       - name: Test (unit tests only)
         if: matrix.sanitizer == 'thread'
-        run: meson test -C build-test --print-errorlogs --no-suite integration
+        run: setarch "$(uname -m)" -R meson test -C build-test --print-errorlogs --no-suite integration
