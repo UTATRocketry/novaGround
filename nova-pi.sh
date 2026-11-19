@@ -16,7 +16,7 @@
 #           [--extra-args "<flags>"] [--unset NOVA_<NAME>] [--global-args "<flags>"]
 #           ./nova-pi.sh build [--env prod|dev]
 #      sudo ./nova-pi.sh start | stop | restart [--env prod|dev]
-#           ./nova-pi.sh status [--json] | logs [--env prod|dev] [-f] | doctor | report
+#           ./nova-pi.sh status [--json] | metrics --json | logs [--env prod|dev] [-f] | doctor | report
 #      sudo ./nova-pi.sh update [--env prod|dev]
 #      sudo ./nova-pi.sh deploy [<tag>|<commit>] [--release <label>]
 #      sudo ./nova-pi.sh uninstall
@@ -570,6 +570,13 @@ do_status() {
 
 do_report() { snapshot report; }
 
+# Read-only system metrics (CPU, memory, temperature, throttling, the running
+# instance, disk I/O, clock sync) as JSON. Needs no sudo and writes nothing.
+do_metrics() {
+  [[ "$JSON" == "true" ]] || { err "Usage: $0 metrics --json"; exit 1; }
+  python3 "$PI_TOOLS" metrics
+}
+
 do_logs() {
   local env; env="$(pick_env)"
   if [[ "$FOLLOW" == "true" ]]; then
@@ -773,6 +780,7 @@ case "$ACTION" in
   restart)   do_restart ;;
   status)    do_status ;;
   report)    do_report ;;
+  metrics)   do_metrics ;;
   logs)      do_logs ;;
   update)    do_update ;;
   deploy)    do_deploy ;;

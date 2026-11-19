@@ -378,6 +378,85 @@ PY
   [ -z "$(python3 "$T" console-url "")" ]
 }
 
+# ── metrics --json (read-only) ───────────────────────────────────────────────
+
+# A fake /proc and /sys, plus stubs for the read-only commands metrics runs.
+make_metrics_fixture() {
+  export PROC_ROOT="$SANDBOX/proc" SYS_ROOT="$SANDBOX/sys"
+  mkdir -p "$PROC_ROOT/4242" "$SYS_ROOT/class/thermal/thermal_zone0"
+  printf 'cpu  100 0 50 800 0 0 0 0 0 0
+cpu0 25 0 10 200 0 0 0 0 0 0
+cpu1 75 0 40 600 0 0 0 0 0 0
+' > "$PROC_ROOT/stat"
+  echo "0.50 0.40 0.30 1/200 4242" > "$PROC_ROOT/loadavg"
+  echo "1234.56 4000.00" > "$PROC_ROOT/uptime"
+  printf 'MemTotal:  948000 kB
+MemFree:  500000 kB
+MemAvailable:  700000 kB
+' > "$PROC_ROOT/meminfo"
+  echo " 179   0 mmcblk0 10 0 80 5 20 0 160 9 0 7 14" > "$PROC_ROOT/diskstats"
+  echo "4242 (nova Ground) S 1 4242 4242 0 -1 0 0 0 0 0 11 22 0 0 20 0 6 0 999 0 0" > "$PROC_ROOT/4242/stat"
+  printf 'Name:	novaGround
+VmRSS:	   12345 kB
+' > "$PROC_ROOT/4242/status"
+  echo 51234 > "$SYS_ROOT/class/thermal/thermal_zone0/temp"
+  printf '#!/usr/bin/env bash
+echo "vcgencmd $*" >> "$CALLS"
+echo throttled=0x50000
+' > "$STUBS/vcgencmd"
+  printf '#!/usr/bin/env bash
+echo "timedatectl $*" >> "$CALLS"
+echo NTPSynchronized=yes
+' > "$STUBS/timedatectl"
+  printf '#!/usr/bin/env bash
+echo "systemctl $*" >> "$CALLS"
+[[ "$1" == show ]] && echo 4242
+exit 0
+' > "$STUBS/systemctl"
+  chmod +x "$STUBS"/*
+}
+
+@test "metrics without --json prints the usage and fails" {
+  run "$NP" metrics
+  [ "$status" -eq 1 ]
+}
+
+@test "metrics --json reports CPU, load, memory, temperature, throttling, the instance, disks and clock" {
+  make_metrics_fixture
+  run "$NP" metrics --json
+  [ "$status" -eq 0 ]
+  python3 - "$output" <<'PY'
+import json, sys
+m = json.loads(sys.argv[1])
+assert sorted(m["cpu"]["cores"]) == ["cpu0", "cpu1"]
+assert m["load"] == [0.5, 0.4, 0.3]
+assert m["memory"]["MemAvailable"] == 700000
+assert m["tempC"] == 51.234
+assert m["throttled"] == "0x50000"
+assert m["instance"]["pid"] == 4242 and m["instance"]["rssKb"] == 12345
+assert m["instance"]["utimeTicks"] == 11 and m["instance"]["stimeTicks"] == 22
+assert m["disks"]["mmcblk0"]["writes"] == 20
+assert m["clock"]["NTPSynchronized"] == "yes"
+PY
+}
+
+@test "metrics --json still works with nothing running and nothing readable" {
+  export PROC_ROOT="$SANDBOX/none" SYS_ROOT="$SANDBOX/none"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$STUBS/pgrep"; chmod +x "$STUBS/pgrep"
+  run "$NP" metrics --json
+  [ "$status" -eq 0 ]
+  python3 -c 'import json,sys; m=json.loads(sys.argv[1]); assert m["instance"] is None and m["tempC"] is None' "$output"
+}
+
+@test "metrics --json never uses sudo or a write verb" {
+  make_metrics_fixture
+  run "$NP" metrics --json
+  [ "$status" -eq 0 ]
+  assert_no_sudo
+  ! grep -E '^systemctl (start|stop|restart|enable|disable|daemon-reload)' "$CALLS"
+  ! grep -E '^(tmux (new|kill|send)|journalctl)' "$CALLS"
+}
+
 # ── safety: tests never escape the sandbox ───────────────────────────────────
 
 @test "no action in this file ever calls sudo" {

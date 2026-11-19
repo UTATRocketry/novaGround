@@ -8,6 +8,12 @@ and tested like any other Python.
         (PROD_DIR, DEV_DIR, ENV_DIR, PI_ENV, STATE_ROOT, DEPLOYED_FILE,
         LEGACY_UNIT, REPORT_VERSION), which nova-pi.sh sets, so tests can point
         them at a scratch directory.
+    nova-pi-tools.py metrics
+        Read-only system metrics for this Pi as JSON: per-core CPU counters,
+        load, memory, temperature, vcgencmd get_throttled, the running
+        instance's PID/CPU/RSS, /proc/diskstats and clock sync. It only reads
+        /proc, /sys and runs read-only commands; it never writes or uses sudo.
+        PROC_ROOT and SYS_ROOT (default /proc, /sys) let tests use fixtures.
     nova-pi-tools.py release <console> <tag|stable>
         Ask the Nova Console which novaGround commit a release pins. Prints
         "<tag> <commit>".
@@ -230,6 +236,120 @@ def snapshot(mode):
     print()
 
 
+PROC = E.get("PROC_ROOT", "/proc")
+SYS = E.get("SYS_ROOT", "/sys")
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except Exception:
+        return None
+
+
+def cpu_times(text):
+    """/proc/stat -> {"total": [...], "cores": {"cpu0": [...]}} (jiffies)."""
+    out = {"total": None, "cores": {}}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if not parts or not parts[0].startswith("cpu"):
+            continue
+        vals = [int(v) for v in parts[1:] if v.isdigit()]
+        if parts[0] == "cpu":
+            out["total"] = vals
+        else:
+            out["cores"][parts[0]] = vals
+    return out
+
+
+def meminfo(text):
+    out = {}
+    for line in (text or "").splitlines():
+        key, _, rest = line.partition(":")
+        fields = rest.split()
+        if fields and fields[0].isdigit():
+            out[key] = int(fields[0])  # kB
+    keep = ("MemTotal", "MemFree", "MemAvailable", "Buffers", "Cached", "SwapTotal", "SwapFree")
+    return {k: out[k] for k in keep if k in out}
+
+
+def diskstats(text):
+    out = {}
+    for line in (text or "").splitlines():
+        f = line.split()
+        if len(f) >= 14 and f[2].startswith(("mmcblk", "sd", "nvme")):
+            out[f[2]] = {"reads": int(f[3]), "sectorsRead": int(f[5]), "writes": int(f[7]),
+                         "sectorsWritten": int(f[9]), "ioMs": int(f[12])}
+    return out
+
+
+def key_values(text):
+    out = {}
+    for line in (text or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            out[key.strip()] = value.strip()
+    return out
+
+
+def instance_pid(pi):
+    """PID of the running novaGround/novaThermo/novaMock: systemd's MainPID, else pgrep."""
+    for env in ("prod", "dev"):
+        pid = run(["systemctl", "show", "-p", "MainPID", "--value", "novaGround@%s.service" % env])
+        if pid.isdigit() and int(pid) > 0:
+            return int(pid), env
+    for name in ("novaGround", "novaThermo", "novaMock"):
+        pid = (run(["pgrep", "-x", name]).splitlines() or [""])[0]
+        if pid.isdigit():
+            return int(pid), "bench"
+    return None, None
+
+
+def process_info(pid):
+    if pid is None:
+        return None
+    stat = read_text("%s/%d/stat" % (PROC, pid))
+    status = read_text("%s/%d/status" % (PROC, pid))
+    if stat is None:
+        return None
+    # comm may contain spaces, so split after its closing parenthesis.
+    rest = stat.rsplit(")", 1)[-1].split()
+    info = {"pid": pid, "utimeTicks": int(rest[11]), "stimeTicks": int(rest[12]),
+            "threads": int(rest[17]), "startTicks": int(rest[19])}
+    for line in (status or "").splitlines():
+        if line.startswith("VmRSS:"):
+            info["rssKb"] = int(line.split()[1])
+    return info
+
+
+def metrics():
+    stat = cpu_times(read_text(PROC + "/stat"))
+    load = (read_text(PROC + "/loadavg") or "").split()
+    temp = read_text(SYS + "/class/thermal/thermal_zone0/temp")
+    pid, via = instance_pid(None)
+    info = process_info(pid)  # None when the PID can't be read
+    timedate = key_values(run(["timedatectl", "show"]))
+    out = {
+        "version": 1,
+        "hostname": socket.gethostname(),
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "clockTicksPerSec": os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100,
+        "uptimeSec": float((read_text(PROC + "/uptime") or "0").split()[0]),
+        "cpu": stat,
+        "load": [float(v) for v in load[:3]] if len(load) >= 3 else None,
+        "memory": meminfo(read_text(PROC + "/meminfo")),
+        "tempC": int(temp) / 1000.0 if temp and temp.strip().lstrip("-").isdigit() else None,
+        "throttled": key_values(run(["vcgencmd", "get_throttled"])).get("throttled"),
+        "instance": dict(info, via=via) if info else None,
+        "disks": diskstats(read_text(PROC + "/diskstats")),
+        "clock": {k: timedate.get(k) for k in ("NTPSynchronized", "NTP", "Timezone", "TimeUSec")},
+    }
+    chrony = run(["chronyc", "tracking"]) if run(["which", "chronyc"]) else ""
+    out["clock"]["chrony"] = chrony or None
+    print(json.dumps(out, indent=2))
+
+
 def release(console, which):
     try:
         with urllib.request.urlopen(f"{console_url(console)}/api/releases/{which}", timeout=5) as resp:
@@ -245,6 +365,8 @@ def release(console, which):
 def main(argv):
     if len(argv) == 3 and argv[1] == "snapshot" and argv[2] in ("json", "human", "report"):
         snapshot(argv[2])
+    elif len(argv) == 2 and argv[1] == "metrics":
+        metrics()
     elif len(argv) == 4 and argv[1] == "release":
         release(argv[2], argv[3])
     elif len(argv) == 3 and argv[1] == "console-url":
