@@ -103,6 +103,9 @@ Shared test helpers:
 `novamock_smoke.sh` (meson suite `integration`, 90 s timeout) starts a
 private Mosquitto on a free loopback port, never 1883, runs novaMock with a
 scenario, and checks the telemetry it publishes and the CSV it records.
+When it fails, it prints novaMock's log with repeated lines collapsed and,
+if the log is still long, the middle cut, because meson keeps only the last
+100 lines of a failing test's output.
 `docs/simulation.md` describes novaMock and its scenario files.
 
 Meson registers it only when `mosquitto` and `python3` are found, and novaMock
@@ -121,11 +124,16 @@ says so during `meson setup`.
   over: plain, under `address,undefined`, and under `thread`.
 
 > [!NOTE]
-> The `thread` jobs skip the smoke test, because paho and Mosquitto aren't
-> built with ThreadSanitizer. They also run with ASLR off (`setarch -R`, in a
-> container without Docker's default seccomp profile). Without that,
-> ThreadSanitizer fails at startup with "unexpected memory mapping", before
-> any test runs.
+> The sanitizer jobs run their tests with ASLR off (`setarch -R`, in a
+> container without Docker's default seccomp profile). The runners' kernels
+> randomize more address bits than Bookworm's GCC 12 sanitizers allow for.
+> Without this, ThreadSanitizer stops with "unexpected memory mapping", and
+> AddressSanitizer prints `AddressSanitizer:DEADLYSIGNAL` over and over. The
+> "Kernel ASLR entropy" step logs the runner's `vm.mmap_rnd_bits` for
+> comparison.
+>
+> The `thread` jobs also skip the smoke test, because paho and Mosquitto
+> aren't built with ThreadSanitizer.
 
 ## Writing a test
 

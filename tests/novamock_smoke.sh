@@ -21,7 +21,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-fail() { echo "FAIL: $*" >&2; [[ -f "$WORK/novamock.log" ]] && sed 's/^/  novaMock: /' "$WORK/novamock.log" >&2; exit 1; }
+fail() {
+  echo "FAIL: $*" >&2
+  if [[ -f "$WORK/novamock.log" ]]; then
+    # meson keeps only the last 100 lines of a failed test's output, and a crashing
+    # sanitizer can print one line thousands of times. Collapse repeats ("[x N]")
+    # and cut the middle of a long log so the start and the end both survive.
+    local log n
+    log="$(uniq -c "$WORK/novamock.log" | sed -E 's/^ *1 //; s/^ *([0-9]+) (.*)$/\2   [x \1]/')"
+    n="$(wc -l <<<"$log")"
+    if (( n > 80 )); then
+      { head -n 30 <<<"$log"; echo "... $((n - 80)) lines cut ..."; tail -n 50 <<<"$log"; }
+    else
+      echo "$log"
+    fi | sed 's/^/  novaMock: /' >&2
+  fi
+  exit 1
+}
 
 PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
 case "$PORT" in

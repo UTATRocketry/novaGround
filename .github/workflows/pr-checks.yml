@@ -110,11 +110,12 @@ jobs:
     timeout-minutes: 20
     container:
       image: debian:bookworm
-      # ThreadSanitizer needs ASLR off: the runners' kernels randomize more address
-      # bits than its memory layout allows ("unexpected memory mapping"). Turning it
-      # off takes personality(ADDR_NO_RANDOMIZE), which Docker's default seccomp
-      # profile blocks, so the thread jobs alone run without that profile.
-      options: ${{ matrix.sanitizer == 'thread' && '--security-opt seccomp=unconfined' || '' }}
+      # The sanitizers in Bookworm's GCC 12 need ASLR off: the runners' kernels
+      # randomize more address bits than their memory layout allows. TSan stops
+      # with "unexpected memory mapping"; ASan loops on "AddressSanitizer:DEADLYSIGNAL".
+      # Turning ASLR off takes personality(ADDR_NO_RANDOMIZE), which Docker's
+      # default seccomp profile blocks, so the sanitizer jobs run without that profile.
+      options: ${{ matrix.sanitizer != 'none' && '--security-opt seccomp=unconfined' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -138,13 +139,22 @@ jobs:
       - name: Build
         run: meson setup build-test -Dhardware=false -Db_sanitize=${{ matrix.sanitizer }} -Db_lundef=false && meson compile -C build-test
 
+      # For a sanitizer failure, compare with a passing run: values above 28 are
+      # what the sanitizers can't map around.
+      - name: Kernel ASLR entropy
+        run: echo "vm.mmap_rnd_bits = $(cat /proc/sys/vm/mmap_rnd_bits 2>/dev/null || echo unreadable)"
+
+      # setarch -R runs the tests with ASLR off (see the container options above).
       - name: Test
-        if: matrix.sanitizer != 'thread'
+        if: matrix.sanitizer == 'none'
         run: meson test -C build-test --print-errorlogs
+
+      - name: Test (ASLR off)
+        if: matrix.sanitizer == 'address,undefined'
+        run: setarch "$(uname -m)" -R meson test -C build-test --print-errorlogs
 
       # paho and mosquitto are not built with ThreadSanitizer, so the novaMock
       # end-to-end test (suite "integration") runs in the other jobs only.
-      # setarch -R runs it with ASLR off (see the container options above).
       - name: Test (unit tests only)
         if: matrix.sanitizer == 'thread'
         run: setarch "$(uname -m)" -R meson test -C build-test --print-errorlogs --no-suite integration
