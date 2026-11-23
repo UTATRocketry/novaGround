@@ -86,7 +86,7 @@ This builds three executables from the same code:
 |---|---|---|---|
 | `novaGround` | 1 ms | 50 ms | The main GSS Pi |
 | `novaThermo` | 100 ms | 250 ms | The thermocouple Pi (MCC 134) |
-| `novaMock` | 100 ms | 250 ms | No hardware initialisation: development and simulator tests |
+| `novaMock` | 100 ms | 250 ms | The full program on simulated hardware (see [simulation.md](simulation.md)): development and simulator tests |
 
 ## Run
 
@@ -121,8 +121,32 @@ Only one runs at a time. Both run `start.sh`, which reads two files:
 
 | File | Holds | Written by |
 |---|---|---|
-| `/etc/nova/pi.env` | `NOVA_PI_NAME`, `NOVA_TARGET`, `NOVA_EXTRA_ARGS` | `sudo ./nova-pi.sh install --name <name> --target <binary>` |
-| `/etc/nova/novaGround-<env>.env` | `NOVA_BROKER`, `NOVA_BACKEND`, `NOVA_CONSOLE` for that environment | `Nova.ps1` on the ops PC, from `ops/nova.settings.ps1` |
+| `/etc/nova/pi.env` | `NOVA_PI_NAME`, `NOVA_TARGET`, and `NOVA_GLOBAL_ARGS` (flags for both environments) | `sudo ./nova-pi.sh install --name <name> --target <binary>`; `configure --global-args` |
+| `/etc/nova/novaGround-<env>.env` | the settings below, for that environment | `Nova.ps1` on the ops PC, from `ops/nova.settings.ps1`; or `nova-pi.sh configure` |
+
+The settings in `novaGround-<env>.env`. Empty or missing means the binary's own
+default (the file lists the empty ones commented out):
+
+| Setting | Flag it becomes | What it does |
+|---|---|---|
+| `NOVA_BROKER` | `--broker` | MQTT broker: `host`, `host:port` (default 1883) or a URL. Required. |
+| `NOVA_BACKEND` | `--backend` | novaOps backend: `host`, `host:port` (default 8000) or a URL. Required. |
+| `NOVA_CONSOLE` | none | Nova Console, for `status`, `report` and `deploy`: `host`, `host:port` (default 8080) or a URL. |
+| `NOVA_VERBOSITY` | `--verbosity` | 0 quiet, 1 info, 2 debug. |
+| `NOVA_SAMPLE_MS` | `--sample-ms` | DAQ sampling interval. |
+| `NOVA_PUBLISH_MS` | `--publish-ms` | Telemetry publish interval. |
+| `NOVA_STATS` | `--stats` | Runtime instrumentation, `on` or `off`. |
+| `NOVA_STATS_MS` | `--stats-ms` | How often the stats are published; see [instrumentation.md](instrumentation.md). |
+| `NOVA_BENCH_FLAGS` | none | `on` lets `start.sh` and `run.sh` pass bench-safety flags (`--stop-actuate`); otherwise they refuse them. Off by default in prod; see [bench-safety.md](bench-safety.md). |
+| `NOVA_SIM_SCENARIO` | none | Scenario file for the simulated hardware (novaMock); the binary reads it from its environment. |
+| `NOVA_STATE_DIR` | none | Where `last_upload.json` goes. Defaults to `/var/lib/nova/<env>`; the binary reads it from its environment. |
+| `NOVA_EXTRA_ARGS` | as written | More flags for this environment only. |
+
+`start.sh` and `run.sh` build the command line the same way (`nova-args.sh`):
+the flags from the settings, then `NOVA_GLOBAL_ARGS`, then `NOVA_EXTRA_ARGS`. The
+binary takes the last occurrence of a flag, so an environment's
+`NOVA_EXTRA_ARGS` beats `NOVA_GLOBAL_ARGS`, and both beat the individual settings.
+Values are passed on as written, and the binary reports one it can't read.
 
 Don't edit the `novaGround-<env>.env` files: `Nova.ps1` rewrites them on every
 `use`, `deploy` and `get-changes`, which is what keeps prod on prod's backend
@@ -132,6 +156,17 @@ ops PC. If the ops PC can't reach the Pi, write one by hand:
 ```bash
 sudo ./nova-pi.sh configure --env dev --broker 192.168.137.1:1883 --backend 192.168.137.1:8001
 ```
+
+`configure` takes a flag for every setting above (`--console`, `--verbosity`,
+`--sample-ms`, `--publish-ms`, `--stats`, `--stats-ms`, `--bench-flags`, `--sim-scenario`,
+`--state-dir`, `--extra-args`) and changes only the ones you pass, keeping the
+rest of that environment's file. `--unset NOVA_STATS` removes one, and
+`--global-args "--verbosity 2"` sets `NOVA_GLOBAL_ARGS` in `pi.env`. It restarts
+the environment if it is running.
+
+`Nova.ps1` still writes only the broker, backend and console. Until it writes the
+rest, a `use`, `deploy` or `get-changes` rewrites the file without the other
+settings.
 
 `Nova.ps1 use dev|prod` switches the Pis along with the PC. To switch only this
 Pi, use `sudo ./nova-pi.sh use dev` (or `prod`). Manage the services with
@@ -145,10 +180,25 @@ backend's `/health` doesn't answer. Every data-file upload is logged as
 `nova-pi-report.timer` sends `./nova-pi.sh status --json` to the Nova Console
 every 15 seconds, so the console shows what each Pi runs.
 
+`./nova-pi.sh metrics --json` prints read-only system metrics: per-core CPU,
+load, memory, temperature, `vcgencmd get_throttled`, the running instance's PID,
+CPU and RSS, disk I/O and clock sync. It needs no `sudo` and writes nothing, so
+it is safe to run over SSH as `admin` while a test is running.
+
 ### On the bench
 
 `./run.sh` starts the program in a tmux session instead, so it survives a
 dropped SSH connection. It uses dev's settings unless you pass `--env prod`.
+Flags after `--` go to the binary and win over the settings, for one run:
+
+```bash
+./run.sh --env dev -- --stop-actuate
+```
+
+`--stop-actuate` makes the program handle commands without writing any output, for
+bench tests that must not move anything. It needs `NOVA_BENCH_FLAGS` on; see
+[bench-safety.md](bench-safety.md), which also covers how the program shuts down
+on `SIGTERM`.
 
 > [!NOTE]
 > `run.sh` and the services can't run at the same time: they'd share the

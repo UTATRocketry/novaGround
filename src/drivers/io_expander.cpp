@@ -1,31 +1,23 @@
 ﻿#include "io_expander.hpp"
 
-TCA9535::TCA9535(const char* i2c_bus, uint8_t address)
-    : device_address(address) {
-    i2c_fd = open(i2c_bus, O_RDWR);
-    if (i2c_fd < 0) {
+#include <iostream>
+#include <thread>
+
+TCA9535::TCA9535(I2cBus& bus, uint8_t address, std::chrono::milliseconds retry_delay)
+    : bus_(bus), device_address(address), retry_delay_(retry_delay) {
+    if (!bus_.is_ready()) {
         set_error("Failed to open I2C bus");
         return;
     }
-
-    if (ioctl(i2c_fd, I2C_SLAVE, device_address) < 0) {
+    if (!bus_.attach(device_address)) {
         set_error("Failed to set I2C device address");
-        close(i2c_fd);
-        i2c_fd = -1;
         return;
     }
-
     ready_ = true;
 }
 
-TCA9535::~TCA9535() {
-    if (i2c_fd >= 0) {
-        close(i2c_fd);
-    }
-}
-
 bool TCA9535::is_ready() const {
-    return ready_ && i2c_fd >= 0;
+    return ready_ && bus_.is_ready();
 }
 
 const std::string& TCA9535::last_error() const {
@@ -37,6 +29,7 @@ bool TCA9535::configure_port(uint8_t port, uint8_t direction) {
         return false;
     }
     uint8_t config_reg = (port == 0) ? CONFIG_PORT0 : CONFIG_PORT1;
+    std::lock_guard<std::mutex> lock(mutex_);
     return write_register(config_reg, direction);
 }
 
@@ -46,6 +39,7 @@ bool TCA9535::write_output(const std::bitset<16>& state) {
     }
 
     uint16_t value = static_cast<uint16_t>(state.to_ulong());
+    std::lock_guard<std::mutex> lock(mutex_);
     bool ok0 = write_register(OUTPUT_PORT0, value & 0xFF);
     bool ok1 = write_register(OUTPUT_PORT1, (value >> 8) & 0xFF);
 
@@ -61,11 +55,28 @@ bool TCA9535::write_output(const std::bitset<16>& state) {
             std::cout << "Relay state written successfully after retry." << std::endl;
             return true;
         }
-        usleep(50000);
+        std::this_thread::sleep_for(retry_delay_);
     }
 
     std::cerr << "Failed to write relay state after retries." << std::endl;
     return false;
+}
+
+bool TCA9535::read_output(std::bitset<16>& state) {
+    if (!is_ready()) {
+        return false;
+    }
+    // Reads the output registers: what the chip was last told to drive. (The
+    // input registers would give the pin levels, which this does not need.)
+    uint8_t port0 = 0;
+    uint8_t port1 = 0;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!read_register(OUTPUT_PORT0, port0) || !read_register(OUTPUT_PORT1, port1)) {
+        return false;
+    }
+    state = std::bitset<16>(static_cast<unsigned long>(port0) |
+                            (static_cast<unsigned long>(port1) << 8));
+    return true;
 }
 
 bool TCA9535::read_input(uint8_t port, uint8_t& value) {
@@ -73,17 +84,12 @@ bool TCA9535::read_input(uint8_t port, uint8_t& value) {
         return false;
     }
     uint8_t input_reg = (port == 0) ? INPUT_PORT0 : INPUT_PORT1;
+    std::lock_guard<std::mutex> lock(mutex_);
     return read_register(input_reg, value);
 }
 
 bool TCA9535::write_register(uint8_t reg, uint8_t value) {
-    if (i2c_fd < 0) {
-        set_error("I2C device not ready");
-        return false;
-    }
-
-    uint8_t buffer[2] = {reg, value};
-    if (write(i2c_fd, buffer, 2) != 2) {
+    if (!bus_.write_reg8(device_address, reg, value)) {
         set_error("Failed to write I2C register");
         return false;
     }
@@ -91,17 +97,8 @@ bool TCA9535::write_register(uint8_t reg, uint8_t value) {
 }
 
 bool TCA9535::read_register(uint8_t reg, uint8_t& value) {
-    if (i2c_fd < 0) {
-        set_error("I2C device not ready");
-        return false;
-    }
-
-    if (write(i2c_fd, &reg, 1) != 1) {
-        set_error("Failed to select I2C register");
-        return false;
-    }
-    if (read(i2c_fd, &value, 1) != 1) {
-        set_error("Failed to read from I2C register");
+    if (!bus_.read_reg8(device_address, reg, value)) {
+        set_error("Failed to read I2C register");
         return false;
     }
     return true;

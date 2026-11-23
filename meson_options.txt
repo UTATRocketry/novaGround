@@ -1,0 +1,2 @@
+option('hardware', type: 'boolean', value: true,
+       description: 'Build the Pi executables (needs wiringPi, libgpiod, paho and the MCC HAT libraries). Off: only nova_core and its tests.')
