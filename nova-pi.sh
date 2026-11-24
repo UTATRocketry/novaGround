@@ -68,6 +68,11 @@ TOOL_DIR="${ROOT}/usr/local/lib/nova"
 TOOL="${TOOL_DIR}/nova-pi.sh"
 REPORT_VERSION=1
 TARGETS="novaGround novaThermo novaMock"
+# The Pi's hardware watchdog (see setup_hw_watchdog). Bookworm keeps config.txt
+# in /boot/firmware; older releases in /boot.
+BOOT_CONFIGS="${ROOT}/boot/firmware/config.txt ${ROOT}/boot/config.txt"
+SYSTEMD_CONF="${ROOT}/etc/systemd/system.conf"
+RUNTIME_WATCHDOG_SEC=10
 
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # Status, the report and the release lookup. It sits beside this script, in the
@@ -376,6 +381,61 @@ setup_units() {
   ok "Installed novaGround@.service, the report timer and $TOOL (with nova-pi-tools.py)"
 }
 
+# The Pi's config.txt, or nothing if this isn't a Pi.
+boot_config() {
+  local f
+  for f in $BOOT_CONFIGS; do [[ -f "$f" ]] && { echo "$f"; return 0; }; done
+  return 1
+}
+
+# Sets KEY=VALUE in a file: replaces the first line that sets KEY (commented
+# out or not) and removes any later ones, or appends the line (after the
+# optional HEADER line, e.g. "[all]" so a config.txt filter section above
+# doesn't apply to it). Changes nothing, and returns 1, when the line is already
+# there and nothing else sets KEY.
+set_conf_line() {
+  local file="$1" key="$2" line="$3" header="${4:-}"
+  local pattern="^[#[:space:]]*${key}[[:space:]]*="
+  if grep -qxF -- "$line" "$file" && [[ "$(grep -cE -- "$pattern" "$file")" -eq 1 ]]; then
+    return 1  # already set
+  fi
+  if grep -qE -- "$pattern" "$file"; then
+    # First match becomes the line; any other match is dropped.
+    awk -v pat="$pattern" -v line="$line" '
+      $0 ~ pat { if (!done) { print line; done = 1 } ; next } { print }' "$file" > "${file}.nova-tmp" \
+      && cat "${file}.nova-tmp" > "$file" && rm -f "${file}.nova-tmp"
+  else
+    # A file that doesn't end in a newline would glue the line onto its last one.
+    [[ -s "$file" && -n "$(tail -c 1 "$file")" ]] && echo >> "$file"
+    [[ -n "$header" ]] && echo "$header" >> "$file"
+    echo "$line" >> "$file"
+  fi
+  return 0
+}
+
+# The Pi's hardware watchdog (docs/design/pi-io-config.md, "Watchdogs"):
+# dtparam=watchdog=on in config.txt turns the chip on, and RuntimeWatchdogSec in
+# systemd's system.conf makes systemd ping it, so a hung kernel or systemd resets
+# the Pi. It applies to the whole Pi, not one environment, so it's set here and
+# not in the env files. Both take effect after a reboot. Idempotent.
+setup_hw_watchdog() {
+  local cfg changed=""
+  if cfg="$(boot_config)"; then
+    set_conf_line "$cfg" "dtparam=watchdog" "dtparam=watchdog=on" "[all]" && changed=1
+    ok "Hardware watchdog on in $cfg (dtparam=watchdog=on)"
+  else
+    warn "No config.txt in /boot/firmware or /boot: not a Pi? Hardware watchdog not set."
+  fi
+  if [[ -f "$SYSTEMD_CONF" ]]; then
+    set_conf_line "$SYSTEMD_CONF" "RuntimeWatchdogSec" "RuntimeWatchdogSec=${RUNTIME_WATCHDOG_SEC}" && changed=1
+    ok "systemd pings it every ${RUNTIME_WATCHDOG_SEC}s or less ($SYSTEMD_CONF: RuntimeWatchdogSec=${RUNTIME_WATCHDOG_SEC})"
+  else
+    warn "No $SYSTEMD_CONF: RuntimeWatchdogSec not set."
+  fi
+  [[ -n "$changed" ]] && warn "The hardware watchdog settings changed: they take effect after a reboot (sudo reboot)."
+  return 0
+}
+
 # ── actions ──────────────────────────────────────────────────────────────────
 
 do_build() {
@@ -412,6 +472,7 @@ do_install() {
   need_root
   step "Installing novaGround from $HERE"
   setup_units
+  setup_hw_watchdog
 
   local e f target
   target="$(read_var "$PI_ENV" NOVA_TARGET)"
@@ -558,7 +619,7 @@ do_restart() {
 # the Nova Console (report). The console's /api/pi-report reads this format;
 # bump REPORT_VERSION if it changes incompatibly.
 snapshot() {
-  PROD_DIR="$PROD_DIR" DEV_DIR="$DEV_DIR" ENV_DIR="$ENV_DIR" PI_ENV="$PI_ENV"   STATE_ROOT="$STATE_ROOT" DEPLOYED_FILE="$DEPLOYED_FILE" LEGACY_UNIT="$LEGACY_UNIT"   REPORT_VERSION="$REPORT_VERSION" python3 "$PI_TOOLS" snapshot "$1"
+  PROD_DIR="$PROD_DIR" DEV_DIR="$DEV_DIR" ENV_DIR="$ENV_DIR" PI_ENV="$PI_ENV"   STATE_ROOT="$STATE_ROOT" DEPLOYED_FILE="$DEPLOYED_FILE" LEGACY_UNIT="$LEGACY_UNIT"   REPORT_VERSION="$REPORT_VERSION" BOOT_CONFIGS="$BOOT_CONFIGS" SYSTEMD_CONF="$SYSTEMD_CONF" RUNTIME_WATCHDOG_SEC="$RUNTIME_WATCHDOG_SEC" python3 "$PI_TOOLS" snapshot "$1"
 }
 
 do_status() {
@@ -726,6 +787,25 @@ do_doctor() {
     && check "prod starts on boot" true "" || check "prod starts on boot" false "run: sudo $0 install"
   systemctl is-active --quiet "$REPORT_TIMER" && check "report timer" true "" \
     || check "report timer" false "run: sudo $0 install"
+  # The hardware watchdog: set in the files, and running now (after a reboot).
+  local cfg
+  if cfg="$(boot_config)" && grep -qxF "dtparam=watchdog=on" "$cfg"; then
+    check "watchdog in config.txt" true "dtparam=watchdog=on"
+  else
+    check "watchdog in config.txt" false "run: sudo $0 install"
+  fi
+  if [[ -f "$SYSTEMD_CONF" ]] && grep -qxF "RuntimeWatchdogSec=${RUNTIME_WATCHDOG_SEC}" "$SYSTEMD_CONF"; then
+    check "systemd RuntimeWatchdogSec" true "${RUNTIME_WATCHDOG_SEC}s"
+  else
+    check "systemd RuntimeWatchdogSec" false "run: sudo $0 install"
+  fi
+  local runtime
+  runtime="$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null)"
+  if [[ -n "$runtime" && "$runtime" != "0" && "$runtime" != "infinity" && "$runtime" != "off" ]]; then
+    check "hardware watchdog running" true "systemd pings it (${runtime})"
+  else
+    check "hardware watchdog running" false "not yet: reboot after install (${runtime:-unknown})"
+  fi
 
   for e in prod dev; do
     f="$(env_file "$e")"

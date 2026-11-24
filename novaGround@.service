@@ -29,7 +29,16 @@ Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+# Process watchdog (docs/design/pi-io-config.md, "Watchdogs"). novaGround sends
+# READY=1 once startup is done and WATCHDOG=1 from its output supervisor, every
+# 50 ms. If the pings stop for WatchdogSec, systemd kills it and Restart=always
+# starts it again; startup leaves every GPIO pin unclaimed and the relays
+# de-energized until the config arrives. READY=1 comes before the first MQTT
+# connection attempt, so a broker that is down doesn't hold up the start. start.sh
+# execs the binary, so the notifications come from the main PID (NotifyAccess=main,
+# the default).
+Type=notify
+WatchdogSec=5
 User=admin
 Group=admin
 
