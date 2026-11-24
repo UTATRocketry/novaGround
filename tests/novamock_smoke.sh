@@ -58,6 +58,17 @@ cat > "$WORK/scenario.json" <<'EOF'
  "gpio_inputs":{"5":1}}
 EOF
 
+# novaMock stands in for novaGround: it takes novaGround's commands and config.
+CMD_NODE=nova/command/novaGround
+CONFIG=nova/config/novaGround
+STATUS=nova/config/novaGround/status
+
+# The per-node config, retained, as the backend publishes it: outputs 17, 27 and
+# 22, input 5, and 8 (reserved: SPI0 CE0), which must be rejected. No heartbeat
+# section, so no comms-loss supervision in the first runs.
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -r -t "$CONFIG" \
+  -m '{"config_hash":"smoke-1","gpio":{"outputs":{"17":{},"27":{},"22":{},"8":{}},"inputs":[5]}}'
+
 mkdir "$WORK/run"
 cd "$WORK/run"   # novaMock records to ./data
 NOVA_ENV=dev \
@@ -84,7 +95,33 @@ sys.exit(1)
 EOF
 python3 "$WORK/check_telemetry.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/telemetry/engine -W 20) \
   || fail "no telemetry with hat 0 channel 3 = 2.5 and GPIO 5 = 1"
-echo "ok: telemetry carries the scenario values"
+echo "ok: telemetry carries the scenario values (input 5 claimed from the config)"
+
+# The config status, retained on novaGround's status topic: the config's hash,
+# the reserved pin rejected, the reserved list, no thermocouples (no MCC 134 in
+# this scenario) and no trips.
+cat > "$WORK/check_status.py" <<'EOF'
+import json, sys
+msgs = [json.loads(line) for line in sys.stdin if line.strip()]
+if not msgs:
+    sys.exit("no status message")
+s = msgs[-1]
+if sorted(s) != ["applied_ms", "config_hash", "rejected", "reserved_pins", "thermocouples", "tripped"]:
+    sys.exit("status keys: %r" % sorted(s))
+if s["config_hash"] != "smoke-1":
+    sys.exit("config_hash: %r" % s)
+if s["rejected"] != [{"item": "gpio.outputs.8", "reason": "reserved (SPI0 CE0)"}]:
+    sys.exit("rejected: %r" % s["rejected"])
+if s["reserved_pins"] != [0, 1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 16, 20, 21, 26]:
+    sys.exit("reserved_pins: %r" % s["reserved_pins"])
+if s["thermocouples"] != {} or s["tripped"] != []:
+    sys.exit("thermocouples/tripped: %r" % s)
+if not s["applied_ms"] or s["applied_ms"] < 1e12:
+    sys.exit("applied_ms: %r" % s)
+EOF
+python3 "$WORK/check_status.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t "$STATUS" --retained-only -W 5 -C 1) \
+  || fail "config status"
+echo "ok: $STATUS reports the applied config and the rejected reserved pin"
 
 # 2. A data-saving command reaches the logger, which records the sampled rows.
 mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
@@ -109,13 +146,21 @@ python3 -c 'import json,sys; d = json.load(open(sys.argv[1])); sys.exit(0 if d.g
   "$WORK/state/last_upload.json" || fail "last_upload.json should report a failed upload: $(cat "$WORK/state/last_upload.json")"
 echo "ok: the failed upload was reported"
 
-# Drive one of each actuator, for the state read-back checked below.
+# Drive one of each actuator on novaGround's own command topic, for the state
+# read-back checked below. An actuator command on the broadcast topic is refused:
+# GPIO 22 must stay low.
 for c in '{"type":"relay","id":3,"state":false}' \
          '{"type":"servo","id":2,"angle":1500}' \
          '{"type":"gpio","id":17,"state":true}'; do
-  mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+  mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t "$CMD_NODE" \
     -m "{\"source\":\"novaOps\",\"command\":$c}"
 done
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+  -m '{"source":"novaOps","command":{"type":"gpio","id":22,"state":true}}'
+for _ in $(seq 50); do grep -q "Refused a 'gpio' command on the broadcast topic" "$WORK/novamock.log" && break; sleep 0.1; done
+grep -q "Refused a 'gpio' command on the broadcast topic" "$WORK/novamock.log" \
+  || fail "a gpio command on nova/command should be refused"
+echo "ok: a gpio command on nova/command is refused"
 
 # 4. With --stats on (this run), telemetry carries seq and timestamps and the
 # stats topic reports the loops and the two commands above.
@@ -189,7 +234,7 @@ if info["actuation"] != "enabled":
 if info["stats_interval_ms"] != 500:
     sys.exit("stats_interval_ms: %r" % info)
 cfg = {name: l["configured_ms"] for name, l in info["loops"].items()}
-if cfg != {"sampler": 20, "publisher": 50, "gpio_sampler": 50}:
+if cfg != {"sampler": 20, "publisher": 50, "gpio_sampler": 50, "supervisor": 50}:
     sys.exit("configured loops: %r" % cfg)
 if info["started_ms"] < 1e12:
     sys.exit("started_ms: %r" % info["started_ms"])
@@ -200,7 +245,8 @@ echo "ok: nova/stats/novaMock/info is retained, with the identity and loop perio
 
 # The actuator state, read back from the (simulated) drivers: retained, so a
 # subscriber that arrives now gets it at once. Relay 3 is off, the rest on;
-# servo 2 pulses 1500 us, the others are off; GPIO 17 is high, the others low.
+# servo 2 pulses 1500 us, the others are off; GPIO 17 is high, the others low
+# (22 too: its command came on the broadcast topic).
 cat > "$WORK/check_state.py" <<'EOF'
 import json, sys
 msg = json.loads(sys.stdin.readline())
@@ -280,10 +326,11 @@ PIDS+=($!)
 for _ in $(seq 100); do grep -q "Subscribed to nova/command" "$WORK/novamock3.log" && break; sleep 0.1; done
 grep -q "Actuation: STOPPED" "$WORK/novamock3.log" || fail "no warning that actuation is stopped"
 
+for _ in $(seq 100); do grep -q "Config applied" "$WORK/novamock3.log" && break; sleep 0.1; done
 for c in '{"type":"relay","id":3,"state":false}' \
          '{"type":"servo","id":2,"angle":1500}' \
          '{"type":"gpio","id":17,"state":true}'; do
-  mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t nova/command \
+  mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t "$CMD_NODE" \
     -m "{\"source\":\"novaOps\",\"command\":$c}"
 done
 sleep 1
@@ -309,8 +356,9 @@ for kind in ("relay", "servo", "gpio"):
     cmd = msg["commands"].get(kind)
     if not cmd or cmd["count"] != 1 or cmd["received_to_done_ms"]["total"]["count"] != 1:
         sys.exit("the %s command should have been counted and timed: %r" % (kind, cmd))
-if msg["stopped_writes"] != 3:
-    sys.exit("expected 3 stopped writes (relay, servo, gpio), got %r" % msg["stopped_writes"])
+# The config's three GPIO output claims, then the relay, servo and gpio writes.
+if msg["stopped_writes"] != 6:
+    sys.exit("expected 6 stopped writes (3 GPIO claims, relay, servo, gpio), got %r" % msg["stopped_writes"])
 EOF
 python3 "$WORK/check_stopped_stats.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/stats/novaMock -W 2) \
   || fail "stats with --stop-actuate"
@@ -327,9 +375,10 @@ if msg["relays"] != {"ok": True, "mask": 0xFFFF}:
 for ch in msg["servos"]["channels"]:
     if ch["output"] != "off":
         sys.exit("a servo moved: %r" % ch)
+# Under --stop-actuate no GPIO output is even claimed.
 gpios = {g["pin_id"]: g["state"] for g in msg["gpios"]["outputs"]}
-if gpios != {17: 0, 27: 0, 22: 0}:
-    sys.exit("a GPIO moved: %r" % gpios)
+if gpios != {}:
+    sys.exit("a GPIO was claimed or moved: %r" % gpios)
 EOF
 python3 "$WORK/check_unmoved.py" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/state/novaMock -W 2) \
   || fail "the read-back state should show nothing moved"
@@ -341,3 +390,85 @@ wait "${PIDS[3]}" || RC=$?
 [[ "$RC" -eq 0 ]] || fail "SIGTERM should end the --stop-actuate run cleanly, it exited $RC"
 grep -q "Shutdown complete" "$WORK/novamock3.log" || fail "the --stop-actuate run did not finish its shutdown"
 echo "ok: --stop-actuate drops the writes, keeps the path, and shuts down cleanly"
+
+# 7. Comms loss: a config with a heartbeat section and GPIO 17 set to `safe`.
+# While the "backend" beats, 17 can be switched on; when the beats stop, 17
+# returns to 0 within the timeout, the status lists the trip, and a command to
+# switch it on again is refused.
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -r -t "$CONFIG" \
+  -m '{"config_hash":"smoke-2","gpio":{"outputs":{"17":{"on_comms_loss":"safe"}}},"heartbeat":{"timeout_ms":1000}}'
+( while true; do
+    mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 0 -t nova/heartbeat/backend -m '{"online":true,"seq":1,"time_ms":0}'
+    sleep 0.2
+  done ) &
+BEAT_PID=$!
+PIDS+=("$BEAT_PID")
+NOVA_ENV=dev NOVA_STATE_DIR="$WORK/state4" NOVA_SIM_SCENARIO="$WORK/scenario.json" \
+  "$NOVAMOCK" --broker "127.0.0.1:$PORT" --backend "http://127.0.0.1:9" \
+              --sample-ms 20 --publish-ms 50 --stats on --stats-ms 200 \
+              > "$WORK/novamock4.log" 2>&1 &
+PIDS+=($!)
+MOCK4=$!
+for _ in $(seq 100); do grep -q "Config applied: hash smoke-2" "$WORK/novamock4.log" && break; sleep 0.1; done
+grep -q "Config applied: hash smoke-2" "$WORK/novamock4.log" || fail "the comms-loss run did not apply its config"
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t "$CMD_NODE" \
+  -m '{"source":"novaOps","command":{"type":"gpio","id":17,"state":true}}'
+sleep 0.6
+
+cat > "$WORK/check_gpio17.py" <<'EOF'
+import json, sys
+want = int(sys.argv[1])
+msgs = [json.loads(line) for line in sys.stdin if line.strip()]
+if not msgs:
+    sys.exit("no state message")
+gpios = {g["pin_id"]: g["state"] for g in msgs[-1]["gpios"]["outputs"]}
+if gpios.get(17) != want:
+    sys.exit("GPIO 17 should be %d: %r" % (want, gpios))
+EOF
+python3 "$WORK/check_gpio17.py" 1 < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/state/novaMock -W 1) \
+  || fail "GPIO 17 should be on while the heartbeat runs"
+echo "ok: with the heartbeat running, a safe output can be switched on"
+
+STOPPED_MS="$(python3 -c 'import time; print(int(time.time() * 1000))')"
+kill "$BEAT_PID" 2>/dev/null || true
+wait "$BEAT_PID" 2>/dev/null || true
+
+cat > "$WORK/check_trip.py" <<'EOF'
+import json, sys
+stopped_ms = int(sys.argv[1])
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    s = json.loads(line)
+    trips = [t for t in s.get("tripped", []) if t["output"] == "gpio:17"]
+    if trips:
+        t = trips[0]
+        if t["reason"] != "comms_loss":
+            sys.exit("trip reason: %r" % t)
+        late = t["time_ms"] - stopped_ms
+        # The timeout is 1000 ms; allow for the last beat in flight and a tick.
+        if late > 1600:
+            sys.exit("tripped %d ms after the heartbeat stopped (timeout 1000)" % late)
+        sys.exit(0)
+sys.exit("no trip of gpio:17 in the status")
+EOF
+python3 "$WORK/check_trip.py" "$STOPPED_MS" < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t "$STATUS" -W 4) \
+  || fail "GPIO 17 should trip on comms loss"
+python3 "$WORK/check_gpio17.py" 0 < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/state/novaMock -W 1) \
+  || fail "GPIO 17 should be back at 0 after the trip"
+echo "ok: when the heartbeat stops, the safe output returns to 0 within the timeout and the trip is reported"
+
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -t "$CMD_NODE" \
+  -m '{"source":"novaOps","command":{"type":"gpio","id":17,"state":true}}'
+for _ in $(seq 30); do grep -q "Refused: gpio:17" "$WORK/novamock4.log" && break; sleep 0.1; done
+grep -q "Refused: gpio:17" "$WORK/novamock4.log" || fail "switching 17 on while the heartbeat is lost should be refused"
+python3 "$WORK/check_gpio17.py" 0 < <(mosquitto_sub -h 127.0.0.1 -p "$PORT" -t nova/state/novaMock -W 1) \
+  || fail "GPIO 17 should stay at 0 while the heartbeat is lost"
+echo "ok: while the heartbeat is lost, a command to switch the safe output on is refused"
+
+kill -TERM "$MOCK4"
+RC=0
+wait "$MOCK4" || RC=$?
+[[ "$RC" -eq 0 ]] || fail "SIGTERM should end the comms-loss run cleanly, it exited $RC"
+# Clear the retained config so nothing else on this (private) broker sees it.
+mosquitto_pub -h 127.0.0.1 -p "$PORT" -q 1 -r -t "$CONFIG" -n

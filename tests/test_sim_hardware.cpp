@@ -32,7 +32,7 @@ struct Fixture {
 BOOST_FIXTURE_TEST_SUITE(sim_hardware, Fixture)
 
 BOOST_AUTO_TEST_CASE(everything_is_present_and_in_its_startup_state) {
-    Hardware hw = build_hardware({17}, {5});
+    Hardware hw = build_hardware();
 
     BOOST_REQUIRE(hw.daq);
     BOOST_REQUIRE(hw.servo);
@@ -40,11 +40,13 @@ BOOST_AUTO_TEST_CASE(everything_is_present_and_in_its_startup_state) {
     BOOST_REQUIRE(hw.gpio);
     BOOST_TEST(hw.servo->is_ready());
     BOOST_TEST(hw.relays->is_ready());
-    BOOST_TEST(hw.relay_state.all());  // all relays on at startup
+    BOOST_TEST(hw.relay_state.all());  // every relay de-energized (bit 1) at startup
+    BOOST_TEST(hw.gpio->read_all_outputs().empty());  // no pin claimed before the config
+    BOOST_TEST(hw.gpio->get_input_pins().empty());
 }
 
 BOOST_AUTO_TEST_CASE(the_daq_hats_are_the_scenarios_and_opened) {
-    Hardware hw = build_hardware({17}, {5});
+    Hardware hw = build_hardware();
     BOOST_REQUIRE_EQUAL(hw.daq_hats.size(), 1u);
     BOOST_TEST(hw.daq_hats[0].address == 0);
 
@@ -57,15 +59,20 @@ BOOST_AUTO_TEST_CASE(the_daq_hats_are_the_scenarios_and_opened) {
 
 BOOST_AUTO_TEST_CASE(a_scenario_without_hats_gives_no_daq_hats_but_the_rest_still_works) {
     daqhats_sim::load(parse_scenario(R"({"gpio_inputs":{"5":1}})"));
-    Hardware hw = build_hardware({17}, {5});
+    Hardware hw = build_hardware();
     BOOST_TEST(hw.daq_hats.empty());
     BOOST_TEST(static_cast<bool>(hw.relays));
     BOOST_TEST(static_cast<bool>(hw.gpio));
 }
 
-BOOST_AUTO_TEST_CASE(gpio_has_the_given_pins_as_outputs_and_inputs_with_scenario_levels) {
-    Hardware hw = build_hardware({17, 27}, {5, 6});
+BOOST_AUTO_TEST_CASE(gpio_pins_claimed_later_have_the_scenarios_input_levels) {
+    Hardware hw = build_hardware();
     int level = -1;
+    BOOST_TEST(!hw.gpio->write(17, 1));  // not claimed yet
+    BOOST_TEST(hw.gpio->configure_output(17, 0));
+    BOOST_TEST(hw.gpio->configure_output(27, 0));
+    BOOST_TEST(hw.gpio->configure_input(5));
+    BOOST_TEST(hw.gpio->configure_input(6));
     BOOST_TEST(hw.gpio->write(17, 1));
     BOOST_TEST(hw.gpio->write(27, 1));
     BOOST_TEST(!hw.gpio->write(5, 1));  // an input
@@ -76,7 +83,7 @@ BOOST_AUTO_TEST_CASE(gpio_has_the_given_pins_as_outputs_and_inputs_with_scenario
 }
 
 BOOST_AUTO_TEST_CASE(the_real_controllers_drive_the_simulated_outputs) {
-    Hardware hw = build_hardware({17}, {5});
+    Hardware hw = build_hardware();
     TelemetryStore telemetry;
 
     RelayController relays(hw.relays.get(), &telemetry, nullptr);

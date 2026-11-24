@@ -380,12 +380,12 @@ BOOST_AUTO_TEST_CASE(the_router_times_commands_by_type) {
     router.set_stats(&stats);
 
     // Received 20 ms ago, as if it had waited in the queue.
-    router.handle_message(R"({"source":"novaOps","command":{"type":"relay","id":1}})",
+    router.handle_message(R"({"source":"novaOps","command":{"type":"relay","id":1}})", CommandOrigin::Node,
                           steady_clock::now() - milliseconds(20));
-    router.handle_message(R"({"source":"novaOps","command":{"type":"boom"}})");
-    router.handle_message(R"({"source":"someoneElse","command":{"type":"relay"}})");  // not ours
-    router.handle_message(R"({"source":"novaOps","command":{"type":"warp"}})");       // no handler
-    router.handle_message("not json");
+    router.handle_message(R"({"source":"novaOps","command":{"type":"boom"}})", CommandOrigin::Node);
+    router.handle_message(R"({"source":"someoneElse","command":{"type":"relay"}})", CommandOrigin::Node);  // not ours
+    router.handle_message(R"({"source":"novaOps","command":{"type":"warp"}})", CommandOrigin::Node);       // no handler
+    router.handle_message("not json", CommandOrigin::Node);
 
     auto msg = parse(stats.take_stats_json());
     const auto& commands = msg.at("commands").as_object();

@@ -175,9 +175,9 @@ BOOST_AUTO_TEST_CASE(discover_and_open_with_no_hats_or_a_failing_bus_gives_an_em
 
 BOOST_AUTO_TEST_CASE(gpio_sampling_stores_the_input_pins_only) {
     FakeDigitalIo io;
-    io.set_direction(5, "in");
-    io.set_direction(6, "in");
-    io.set_direction(17, "out");
+    io.configure_input(5);
+    io.configure_input(6);
+    io.configure_output(17, 0);
     io.levels = {{5, 1}, {6, 0}, {17, 1}};
     gpio_sample_once(io, store);
     auto states = store.snapshot_gpio_states();
@@ -188,7 +188,7 @@ BOOST_AUTO_TEST_CASE(gpio_sampling_stores_the_input_pins_only) {
 
 BOOST_AUTO_TEST_CASE(gpio_sampling_replaces_the_previous_states) {
     FakeDigitalIo io;
-    io.set_direction(5, "in");
+    io.configure_input(5);
     io.levels = {{5, 1}};
     gpio_sample_once(io, store);
     io.levels = {{5, 0}};
@@ -198,7 +198,7 @@ BOOST_AUTO_TEST_CASE(gpio_sampling_replaces_the_previous_states) {
 
 BOOST_AUTO_TEST_CASE(a_throwing_gpio_read_is_swallowed_and_keeps_the_old_states) {
     FakeDigitalIo io;
-    io.set_direction(5, "in");
+    io.configure_input(5);
     io.levels = {{5, 1}};
     gpio_sample_once(io, store);
     io.throw_on_read_all = true;

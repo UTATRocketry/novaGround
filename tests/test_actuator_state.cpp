@@ -63,9 +63,9 @@ BOOST_AUTO_TEST_CASE(the_message_reports_what_each_driver_holds) {
     servo.writeMicroseconds(2, 1500);
     servo.disablePWM(2);
     SimDigitalIo gpio;
-    gpio.set_direction(17, "out");
-    gpio.set_direction(27, "out");
-    gpio.set_direction(5, "in");
+    gpio.configure_output(17, 0);
+    gpio.configure_output(27, 0);
+    gpio.configure_input(5);
     gpio.write(27, 1);
 
     ActuatorSources sources;
@@ -164,7 +164,7 @@ BOOST_AUTO_TEST_CASE(one_unreadable_servo_channel_does_not_hide_the_others) {
 BOOST_AUTO_TEST_CASE(a_gpio_driver_that_throws_is_reported_and_counted) {
     StatsRegistry stats = make_stats();
     FakeDigitalIo gpio;
-    gpio.set_direction(17, "out");
+    gpio.configure_output(17, 0);
     gpio.throw_on_read_all = true;
     ActuatorSources sources;
     sources.gpio = &gpio;
@@ -181,7 +181,7 @@ BOOST_AUTO_TEST_CASE(reading_changes_nothing) {
     SimPwmDriver servo;
     servo.writeMicroseconds(7, 1200);
     SimDigitalIo gpio;
-    gpio.set_direction(22, "out");
+    gpio.configure_output(22, 0);
     gpio.write(22, 1);
     ActuatorSources sources;
     sources.relays = &relays;

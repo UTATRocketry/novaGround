@@ -331,6 +331,72 @@ teardown() { teardown_sandbox; }
   [ -f "$NOVA_PI_ROOT/etc/nova/pi.env" ]
 }
 
+@test "install turns the hardware watchdog on in config.txt and system.conf, once" {
+  mkdir -p "$NOVA_PI_ROOT/boot/firmware"
+  # A filter section at the end, and no newline after the last line.
+  printf '# Pi config\n[pi4]\narm_boost=1' > "$NOVA_PI_ROOT/boot/firmware/config.txt"
+  printf '[Manager]\n#RuntimeWatchdogSec=off\n#RebootWatchdogSec=10min\n' > "$NOVA_PI_ROOT/etc/systemd/system.conf"
+  run "$NP" install --target novaThermo
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"after a reboot"* ]]
+  # Appended under [all], so the [pi4] filter doesn't apply to it.
+  [ "$(cat "$NOVA_PI_ROOT/boot/firmware/config.txt")" = $'# Pi config\n[pi4]\narm_boost=1\n[all]\ndtparam=watchdog=on' ]
+  [ "$(cat "$NOVA_PI_ROOT/etc/systemd/system.conf")" = $'[Manager]\nRuntimeWatchdogSec=10\n#RebootWatchdogSec=10min' ]
+
+  before="$(cat "$NOVA_PI_ROOT/boot/firmware/config.txt" "$NOVA_PI_ROOT/etc/systemd/system.conf")"
+  run "$NP" install
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"after a reboot"* ]]
+  [ "$(cat "$NOVA_PI_ROOT/boot/firmware/config.txt" "$NOVA_PI_ROOT/etc/systemd/system.conf")" = "$before" ]
+}
+
+@test "install replaces an existing watchdog setting instead of adding another" {
+  mkdir -p "$NOVA_PI_ROOT/boot"
+  printf 'dtparam=audio=on\ndtparam=watchdog=off\n#dtparam=watchdog=on\n' > "$NOVA_PI_ROOT/boot/config.txt"
+  printf '[Manager]\nRuntimeWatchdogSec=30\n' > "$NOVA_PI_ROOT/etc/systemd/system.conf"
+  run "$NP" install --target novaGround
+  [ "$status" -eq 0 ]
+  [ "$(cat "$NOVA_PI_ROOT/boot/config.txt")" = $'dtparam=audio=on\ndtparam=watchdog=on' ]
+  [ "$(cat "$NOVA_PI_ROOT/etc/systemd/system.conf")" = $'[Manager]\nRuntimeWatchdogSec=10' ]
+}
+
+@test "install on a machine without config.txt warns and carries on" {
+  run "$NP" install --target novaMock
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Hardware watchdog not set"* ]]
+}
+
+@test "doctor and status report whether the hardware watchdog is on" {
+  python3 -c 'import pwd' 2>/dev/null || skip "needs a POSIX python3"
+  # No env files: doctor and status then try no network.
+  run "$NP" doctor
+  grep -q "watchdog in config.txt *FAIL" <<<"$output"
+  grep -q "systemd RuntimeWatchdogSec *FAIL" <<<"$output"
+  run "$NP" status --json
+  python3 - "$output" <<'PY'
+import json, sys
+w = json.loads(sys.argv[1])["watchdog"]
+assert w["configTxt"] is False and w["systemConf"] is False and w["running"] is False, w
+PY
+
+  mkdir -p "$NOVA_PI_ROOT/boot/firmware"
+  : > "$NOVA_PI_ROOT/boot/firmware/config.txt"
+  printf '[Manager]\n' > "$NOVA_PI_ROOT/etc/systemd/system.conf"
+  run "$NP" install
+  [ "$status" -eq 0 ]
+  run "$NP" doctor
+  grep -q "watchdog in config.txt *OK" <<<"$output"
+  grep -q "systemd RuntimeWatchdogSec *OK" <<<"$output"
+  grep -q "hardware watchdog running *FAIL" <<<"$output"
+  run "$NP" status --json
+  python3 - "$output" <<'PY'
+import json, sys
+w = json.loads(sys.argv[1])["watchdog"]
+assert w["configTxt"] is True and w["systemConf"] is True, w
+assert w["running"] is False, w  # the stub systemctl reports nothing: not until a reboot
+PY
+}
+
 @test "install refuses to run from the installed tool copy" {
   run "$NP" install --target novaGround
   [ "$status" -eq 0 ]

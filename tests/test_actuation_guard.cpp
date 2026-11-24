@@ -101,11 +101,19 @@ BOOST_AUTO_TEST_CASE(a_stopped_pwm_driver_drops_both_kinds_of_write) {
     BOOST_TEST(stopped_writes(stats) == 2.0);
 }
 
-BOOST_AUTO_TEST_CASE(stopped_digital_io_drops_writes_and_direction_changes) {
-    BOOST_TEST(stopped_gpio.set_direction(17, "out"));
+BOOST_AUTO_TEST_CASE(stopped_digital_io_drops_writes_and_output_claims) {
+    BOOST_TEST(stopped_gpio.configure_output(17, 0));
     BOOST_TEST(stopped_gpio.write(17, 1));
     BOOST_TEST(gpio.calls.empty());
     BOOST_TEST(stopped_writes(stats) == 2.0);
+}
+
+BOOST_AUTO_TEST_CASE(stopped_digital_io_passes_input_claims_and_releases) {
+    // Neither drives a line; the GPIO sampler needs the inputs.
+    BOOST_TEST(stopped_gpio.configure_input(5));
+    BOOST_TEST(stopped_gpio.release(5));
+    BOOST_TEST((gpio.calls == std::vector<std::string>{"in:5", "release:5"}));
+    BOOST_TEST(stopped_writes(stats) == 0.0);
 }
 
 BOOST_AUTO_TEST_CASE(reads_still_go_to_the_real_driver) {
@@ -173,9 +181,10 @@ BOOST_AUTO_TEST_CASE(a_servo_command_is_handled_but_nothing_is_written) {
 
 BOOST_AUTO_TEST_CASE(a_gpio_command_is_handled_but_nothing_is_written) {
     GpioController controller(&stopped_gpio, nullptr);
-    controller.handle_command(cmd(R"({"type":"gpio","id":17,"mode":"output","state":true})"));
+    controller.apply({17}, {});
+    controller.handle_command(cmd(R"({"type":"gpio","id":17,"state":true})"));
     BOOST_TEST(gpio.calls.empty());
-    BOOST_TEST(stopped_writes(stats) == 2.0);
+    BOOST_TEST(stopped_writes(stats) == 2.0);  // the claim and the write
 }
 
 BOOST_AUTO_TEST_CASE(the_command_path_is_still_timed) {
@@ -183,7 +192,7 @@ BOOST_AUTO_TEST_CASE(the_command_path_is_still_timed) {
     CommandRouter router("novaOps");
     router.register_handler("relay", [&](const json::object& c) { relay_controller.handle_command(c); });
     router.set_stats(&stats);
-    router.handle_message(R"({"source":"novaOps","command":{"type":"relay","id":1,"state":false}})");
+    router.handle_message(R"({"source":"novaOps","command":{"type":"relay","id":1,"state":false}})", CommandOrigin::Node);
 
     auto msg = json::parse(stats.take_stats_json()).as_object();
     const auto& relay = msg.at("commands").at("relay").as_object();

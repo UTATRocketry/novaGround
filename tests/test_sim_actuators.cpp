@@ -34,11 +34,10 @@ BOOST_AUTO_TEST_CASE(gpio_follows_the_real_drivers_contract) {
     int w = -1;
     BOOST_TEST(!io.write(17, 1));  // not configured
     BOOST_TEST(!io.read(5, v));    // not configured
-    BOOST_TEST(!io.set_direction(17, "sideways"));
 
-    BOOST_TEST(io.set_direction(17, "out"));
-    BOOST_TEST(io.set_direction(5, "in"));
-    BOOST_TEST(io.set_direction(6, "in"));
+    BOOST_TEST(io.configure_output(17, 0));
+    BOOST_TEST(io.configure_input(5));
+    BOOST_TEST(io.configure_input(6));
     BOOST_TEST(io.write(17, 1));
     BOOST_TEST(io.output_level(17) == 1);
     BOOST_TEST(!io.write(5, 1));   // an input cannot be written
@@ -51,9 +50,9 @@ BOOST_AUTO_TEST_CASE(gpio_follows_the_real_drivers_contract) {
 
 BOOST_AUTO_TEST_CASE(gpio_input_listing_only_has_inputs) {
     SimDigitalIo io(std::map<int, int>{{5, 1}});
-    io.set_direction(5, "in");
-    io.set_direction(6, "in");
-    io.set_direction(17, "out");
+    io.configure_input(5);
+    io.configure_input(6);
+    io.configure_output(17, 0);
     BOOST_TEST((io.get_input_pins() == std::vector<int>{5, 6}));
     auto all = io.read_all_inputs();
     BOOST_TEST(all.size() == 2u);
@@ -89,14 +88,58 @@ BOOST_AUTO_TEST_CASE(the_pwm_driver_reads_back_pulse_off_and_range) {
 
 BOOST_AUTO_TEST_CASE(gpio_output_listing_only_has_outputs_and_their_levels) {
     SimDigitalIo io(std::map<int, int>{{5, 1}});
-    io.set_direction(5, "in");
-    io.set_direction(17, "out");
-    io.set_direction(27, "out");
+    io.configure_input(5);
+    io.configure_output(17, 0);
+    io.configure_output(27, 0);
     io.write(27, 1);
     auto outputs = io.read_all_outputs();
     BOOST_TEST(outputs.size() == 2u);
     BOOST_TEST(outputs.at(17) == 0);  // configured, never written: low
     BOOST_TEST(outputs.at(27) == 1);
+}
+
+BOOST_AUTO_TEST_CASE(gpio_claims_set_the_level_at_once_and_release_gives_the_pin_back) {
+    SimDigitalIo io;
+    BOOST_TEST(io.configure_output(17, 1));
+    BOOST_TEST(io.claimed(17));
+    BOOST_TEST(io.output_level(17) == 1);
+    // Claiming an output again only sets the level.
+    BOOST_TEST(io.configure_output(17, 0));
+    BOOST_TEST(io.output_level(17) == 0);
+    BOOST_TEST(io.release(17));
+    BOOST_TEST(!io.claimed(17));
+    BOOST_TEST(!io.write(17, 1));
+    BOOST_TEST(io.read_all_outputs().empty());
+    BOOST_TEST(io.release(17));  // releasing an unclaimed pin is fine
+}
+
+BOOST_AUTO_TEST_CASE(gpio_an_input_claimed_as_an_output_changes_direction) {
+    SimDigitalIo io(std::map<int, int>{{5, 1}});
+    BOOST_TEST(io.configure_input(5));
+    BOOST_TEST(io.configure_output(5, 0));
+    int v = -1;
+    BOOST_TEST(!io.read(5, v));
+    BOOST_TEST(io.write(5, 1));
+    BOOST_TEST(io.configure_input(5));
+    BOOST_TEST(io.read(5, v));
+    BOOST_TEST(v == 1);
+}
+
+BOOST_AUTO_TEST_CASE(gpio_injected_failures_leave_the_pin_unclaimed_or_unchanged) {
+    SimDigitalIo io;
+    io.fail_claims_of(22);
+    BOOST_TEST(!io.configure_output(22, 0));
+    BOOST_TEST(!io.claimed(22));
+    BOOST_TEST(!io.configure_input(22));
+    BOOST_TEST(!io.claimed(22));
+
+    BOOST_TEST(io.configure_output(17, 0));
+    io.fail_writes_to(17);
+    BOOST_TEST(!io.write(17, 1));
+    BOOST_TEST(io.output_level(17) == 0);
+    io.fail_writes_to(17, false);
+    BOOST_TEST(io.write(17, 1));
+    BOOST_TEST(io.output_level(17) == 1);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

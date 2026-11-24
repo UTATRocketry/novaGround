@@ -117,7 +117,7 @@ BOOST_AUTO_TEST_CASE(the_daq_loop_keeps_sampling_until_stopped) {
 
 BOOST_AUTO_TEST_CASE(the_gpio_loop_samples_then_stops_promptly) {
     FakeDigitalIo io;
-    io.set_direction(5, "in");
+    io.configure_input(5);
     io.levels[5] = 1;
     TelemetryStore store;
 
@@ -133,7 +133,7 @@ BOOST_AUTO_TEST_CASE(the_gpio_loop_samples_then_stops_promptly) {
 
 BOOST_AUTO_TEST_CASE(a_loop_given_an_already_stopped_token_does_no_work) {
     FakeDigitalIo io;
-    io.set_direction(5, "in");
+    io.configure_input(5);
     TelemetryStore store;
     std::stop_source source;
     source.request_stop();
