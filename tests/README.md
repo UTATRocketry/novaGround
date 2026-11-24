@@ -64,7 +64,12 @@ library (`src/sim/`) instead of the real one.
 | Files | Cover |
 |---|---|
 | `test_cli.cpp` | Command-line parsing and its usage text |
-| `test_command_router.cpp`, `test_json_utils.cpp`, `test_telemetry.cpp` | Incoming commands, JSON handling, telemetry messages |
+| `test_command_router.cpp`, `test_json_utils.cpp`, `test_telemetry.cpp` | Incoming commands (including actuator commands refused on the broadcast topic), JSON handling, telemetry messages |
+| `test_node_topics.cpp` | Which topic goes where: node and broadcast commands, config, heartbeat, a stand-in build's topics |
+| `test_pi_io_config.cpp` | Parsing the per-node config: malformed entries, reserved pins, the BCM range, duplicates, thermocouple types |
+| `test_io_config_controller.cpp` | Applying the config: GPIO claims, thermocouple types (also through the real MCC driver over the simulator), the status message |
+| `test_output_supervisor.cpp` | Max on-time and comms-loss trips with an injected clock, latching, refusal while stale, failed trip writes, `--stop-actuate` |
+| `test_sd_notify.cpp` | systemd notifications to `NOTIFY_SOCKET` |
 | `test_actuation_guard.cpp` | Stopped actuation: writes to relays, PWM and digital outputs are dropped, reads still go through |
 | `test_actuator_state.cpp` | The actuator-state message, including hardware that's missing or can't be read |
 | `test_relay_controller.cpp`, `test_servo_controller.cpp`, `test_gpio_controller.cpp` | The controllers, over fake I/O |
@@ -79,8 +84,26 @@ Shared test helpers:
 | File | Is |
 |---|---|
 | `fake_i2c_bus.hpp` | An `I2cBus` that acts as a register file. It records every write, answers reads from its registers, and can be told to fail. |
-| `fake_digital_io.hpp` | Digital I/O that enforces the real driver's contract: writes need an output pin, reads an input pin. |
+| `fake_digital_io.hpp` | Digital I/O that enforces the real driver's contract: a claim sets the level, a failed claim leaves the pin unclaimed, writes need an output pin, reads an input pin. Claims and writes can be made to fail. |
 | `temp_dir.hpp` | A unique directory under the system temp dir, removed when it goes out of scope. |
+
+### LinuxGpio against gpio-sim
+
+`test_linux_gpio.cpp` tests the real libgpiod driver against the kernel's
+`gpio-sim` module. Meson builds it (`linux_gpio_tests`, suite `hardware`)
+wherever libgpiod 1.x is installed; it is skipped unless it is given a gpio-sim
+chip. CI has no gpio-sim, so there it never runs. To run it (needs root to make
+the chip, and `CONFIG_GPIO_SIM`):
+
+```bash
+sudo modprobe gpio-sim
+sudo mkdir -p /sys/kernel/config/gpio-sim/nova/bank0
+echo 32 | sudo tee /sys/kernel/config/gpio-sim/nova/bank0/num_lines
+echo 1 | sudo tee /sys/kernel/config/gpio-sim/nova/live
+chip=/dev/$(cat /sys/kernel/config/gpio-sim/nova/bank0/chip_name)
+sudo chmod a+rw "$chip" /sys/bus/gpio/devices/${chip#/dev/}/sim_gpio*/pull
+NOVA_GPIO_SIM_CHIP=$chip meson test -C build-test linux_gpio
+```
 
 ## Script tests
 
@@ -102,7 +125,10 @@ Shared test helpers:
 
 `novamock_smoke.sh` (meson suite `integration`, 90 s timeout) starts a
 private Mosquitto on a free loopback port, never 1883, runs novaMock with a
-scenario, and checks the telemetry it publishes and the CSV it records.
+scenario, and checks the telemetry it publishes and the CSV it records. It also
+applies a per-node config and checks the status, the topic routing (a `gpio`
+command on `nova/command` is refused), `--stop-actuate`, and a comms-loss trip
+when its heartbeat stops.
 When it fails, it prints novaMock's log with repeated lines collapsed and,
 if the log is still long, the middle cut, because meson keeps only the last
 100 lines of a failing test's output.

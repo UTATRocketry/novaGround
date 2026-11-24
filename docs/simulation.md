@@ -20,6 +20,41 @@ machine that is gets decided when building: `novaGround` and `novaThermo` link
 It starts the same way (`./build/novaMock --broker localhost`) and needs only
 paho and Boost to build, so it builds on a laptop or in CI.
 
+## novaMock stands in for novaGround
+
+novaMock is built with `NOVA_STANDS_IN_FOR="novaGround"` (next to
+`NOVA_BUILD_ID="novaMock"` in `meson.build`). That is identity, like the build
+name, not a setting. With it, novaMock acts on novaGround's commands and config:
+
+| Topic | novaMock uses |
+|---|---|
+| Commands for this node | `nova/command/novaGround` |
+| Commands for every node | `nova/command` |
+| Per-node I/O config (retained) | `nova/config/novaGround` |
+| Config status (retained, published) | `nova/config/novaGround/status` |
+| Backend heartbeat | `nova/heartbeat/backend` |
+
+Everywhere else it keeps its own name: the MQTT client ID, the telemetry
+`source`, `nova/stats/novaMock`, `nova/state/novaMock` and its CSV names
+(`novaMock_<name>_sensors.csv`). Running it on a broker where the real
+novaGround also runs makes both act on novaGround's commands.
+
+Like the real program, novaMock claims no GPIO pin until a config arrives on
+`nova/config/novaGround`, refuses `relay`, `gpio` and `servo` commands that
+arrive on `nova/command`, and runs the output supervisor (maximum on-time and
+comms-loss trips) on its simulated relays and GPIO. A config to try it by hand:
+
+```bash
+mosquitto_pub -r -t nova/config/novaGround -m \
+  '{"config_hash":"by-hand","gpio":{"outputs":{"17":{"max_on_ms":5000,"on_comms_loss":"safe"}},"inputs":[5]},"heartbeat":{"timeout_ms":2000}}'
+mosquitto_sub -t nova/config/novaGround/status
+```
+
+With a `heartbeat` section in the config, a `safe` output returns to 0 when no
+`{"online":true}` arrives on `nova/heartbeat/backend` for `timeout_ms`, so either
+run the backend or publish the beats yourself. Clear the retained config with
+`mosquitto_pub -r -t nova/config/novaGround -n`.
+
 ## Scenario files
 
 The simulated sensors and faults come from a JSON file named by the
@@ -57,7 +92,10 @@ sensors. If the variable names a file that cannot be read, the simulator fails
   NaN, like a real failed read); `missing_hats` lists hats that are in the file
   but not found on the bus; `read_delay_us` slows every read, to provoke
   sample-period overruns.
-- **`gpio_inputs`**: the level each input pin reads (default low).
+- **`gpio_inputs`**: the level each input pin reads (default low), once the
+  config has claimed it as an input.
+- An `mcc134` HAT's thermocouple types are set from the config's `daq` section,
+  as on the Pi; the simulated readings don't change with the type.
 
 ## Tests
 
@@ -66,8 +104,12 @@ sensors. If the variable names a file that cannot be read, the simulator fails
   `MccDaqHats` driver over it.
 - `novamock_smoke` (suite `integration`) starts a private mosquitto on a free
   loopback port, runs novaMock with a scenario, and checks the published
-  telemetry and a recorded CSV. It needs `mosquitto`, `mosquitto_sub`,
-  `mosquitto_pub` and `python3`, and never touches port 1883.
+  telemetry and a recorded CSV. It also applies a config and checks the status
+  (including a rejected reserved pin), commands a pin on
+  `nova/command/novaGround`, checks that a `gpio` command on `nova/command` is
+  refused, and stops a heartbeat to check that a `safe` output trips within the
+  timeout and that switching it on again is refused. It needs `mosquitto`,
+  `mosquitto_sub`, `mosquitto_pub` and `python3`, and never touches port 1883.
 
 The simulated headers in `src/sim/include/daqhats/` are not MCC's; they declare
 only what novaGround calls, with this simulator's own constants. A real build

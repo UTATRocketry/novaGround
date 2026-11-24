@@ -7,6 +7,8 @@ Building, running and configuring novaGround on a Raspberry Pi.
 - How to install the toolchain and libraries, automatically or by hand
 - Which executables the build makes, and how they differ
 - Every command-line option, and where the service gets its settings
+- How commands, GPIO pins and thermocouple types reach a Pi, and which pins are reserved
+- What the watchdogs do and how they are turned on
 - How to address stacked DAQ HATs
 
 > [!IMPORTANT]
@@ -219,6 +221,91 @@ sudo ./nova-pi.sh install --name NovaGround --target novaGround   # or NovaTherm
 
 Then run `.\ops\Nova.ps1 use prod` on the ops PC to write both environments'
 settings.
+
+## Commands, GPIO and thermocouples
+
+The design is `docs/design/pi-io-config.md` in Nova-Collected.
+
+**Topics.** Each Pi takes commands on two topics: `nova/command` for every node
+(`data_file`) and `nova/command/<node>` for itself (`relay`, `gpio`, `servo`).
+`<node>` is the build's name (`novaGround`, `novaThermo`). A `relay`, `gpio` or
+`servo` command that arrives on `nova/command` is refused and logged: every node
+would act on it. Retained commands are ignored.
+
+**The per-node config.** The backend publishes a retained message on
+`nova/config/<node>` when it connects and whenever the active config changes:
+the GPIO outputs (with their limits) and inputs, the relay channels' limits, each
+MCC 134 channel's thermocouple type, and the heartbeat timeout. novaGround
+applies what it can and answers on the retained `nova/config/<node>/status`:
+
+```json
+{
+  "config_hash": "3f9a1c0be27d4a55",
+  "applied_ms": 1795110000000,
+  "rejected": [ { "item": "gpio.outputs.8", "reason": "reserved (SPI0 CE0)" } ],
+  "reserved_pins": [0, 1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 16, 20, 21, 26],
+  "thermocouples": { "1": { "0": "K", "1": "T", "2": "K", "3": "K" } },
+  "tripped": [ { "output": "gpio:17", "reason": "comms_loss", "time_ms": 1795110123456 } ]
+}
+```
+
+It rejects only malformed or impossible items, and applies the rest: an unknown
+key, a pin outside BCM 0-27, a reserved pin, a pin listed as both input and
+output, an unknown thermocouple type, a `daq` address that isn't an MCC 134, and
+a GPIO claim or type write that failed. Before any config `config_hash` and
+`applied_ms` are null. `thermocouples` lists every channel of every MCC 134 with
+the type it is set to.
+
+**GPIO.** No pin is hard-coded. Until the first config arrives novaGround claims
+no GPIO pin and refuses every `gpio` command, so the relay hardware's own pull
+resistors must hold the relays off during boot. Each configured output is claimed
+once at level 0; a pin dropped from the config is driven to 0 and released; a
+`gpio` command for a pin that isn't a configured output is refused, as is the old
+`mode` field. Failed claims and writes are logged with the pin and libgpiod's
+error and counted in the stats (`gpio_claim_failures`, `gpio_write_failures`),
+and the actuator CSV records the level really written. A recording's GPIO columns
+are the outputs configured when it started.
+
+**Reserved pins.** These are facts about the HATs and the board, so they're in
+the code (`src/core/pi_io_config.cpp`) and reserved on every build: 0 and 1 (HAT
+ID EEPROM), 2 and 3 (I2C1: relay board and servo driver), 7 to 11 (SPI0, used by
+daqhats), 12, 13 and 26 (HAT address select), 16 and 20 (MCC 128 reset and
+interrupt), 21 (daqhats' shared interrupt). That leaves 4, 5, 6, 14, 15, 17, 18,
+19, 22, 23, 24, 25 and 27; 14 and 15 are the UART.
+
+**Thermocouples.** Every MCC 134 channel starts as type K. A config sets each
+configured channel's type (`mcc134_tc_type_write`); a channel with no configured
+sensor goes back to K (`kUnconfiguredTcType` in `src/interfaces/analog_io.hpp`;
+whether it should be disabled instead is an open question). Only changes are
+written.
+
+**Output limits.** See [bench-safety.md](bench-safety.md#output-limits-and-comms-loss):
+a maximum on-time and comms-loss trips for relay and GPIO outputs, driven by the
+backend's heartbeat on `nova/heartbeat/backend`.
+
+## Watchdogs
+
+Two watchdogs turn the outputs off if novaThermo (or any Pi) freezes:
+
+- **Process watchdog.** `novaGround@.service` is `Type=notify` with
+  `WatchdogSec=5`. novaGround sends `READY=1` once its hardware is up (before it
+  connects to the broker), then `WATCHDOG=1` from the output supervisor's 50 ms
+  tick. If the pings stop for 5 seconds, systemd kills it and `Restart=always`
+  starts it again, with the relays de-energized and no GPIO pin claimed. The
+  notifications go straight to `$NOTIFY_SOCKET` (no libsystemd); without it, as
+  under `run.sh` and in novaMock, nothing is sent.
+- **Hardware watchdog.** `sudo ./nova-pi.sh install` adds `dtparam=watchdog=on`
+  to the Pi's `config.txt` (`/boot/firmware/config.txt`, or `/boot/config.txt`)
+  and sets `RuntimeWatchdogSec=10` in `/etc/systemd/system.conf`, so a hung
+  kernel or systemd resets the Pi. Both take effect after a reboot. Running
+  `install` again changes nothing. `./nova-pi.sh doctor` and `status` report
+  whether both are set and whether systemd is pinging the watchdog.
+
+Neither has been checked on a Pi yet. The bench checks in the design doc (freeze
+novaGround with `kill -STOP`, crash the kernel with
+`echo c | sudo tee /proc/sysrq-trigger`, with a meter on each relay) still have to
+be done, as does checking the Pi 4 watchdog's longest timeout (believed to be
+about 15 seconds).
 
 ## Data files
 

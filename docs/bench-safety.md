@@ -18,7 +18,8 @@ reported as successful.
 |---|---|
 | Relay writes (TCA9535 output registers) | Reads of the relay registers |
 | Servo pulse and disable writes (PCA9685) | Reads of the servo channels |
-| GPIO writes and direction changes | GPIO input and output-line reads, the GPIO sampler |
+| GPIO writes and output claims | GPIO input claims, releases, input and output-line reads, the GPIO sampler |
+| Output-supervisor trips (they go through the same wrappers) | The supervisor's timers and the `tripped` list in the config status |
 | | The DAQ, telemetry, data files and uploads |
 | | Command validation, timing, the stats |
 
@@ -26,10 +27,16 @@ Because the wrappers sit under the controllers (`src/core/actuation_guard.hpp`),
 controller has a stop branch, and a write added to a controller later is dropped
 without anyone remembering to.
 
-**What it does not stop.** Outputs are still set up at startup, as they always
-are: every relay on, the output pins configured and driven low. Starting novaGround
-with `--stop-actuate` on a Pi whose valves are wired to those outputs moves them
-exactly as starting it without. Start it with the plant in a safe state.
+**What it does not stop.** The relays are still set to their startup state, as
+they always are: every relay de-energized (bit 1; the boards are active-low).
+Starting novaGround with `--stop-actuate` on a Pi whose valves are wired to the
+relays moves them exactly as starting it without. Start it with the plant in a
+safe state. No GPIO pin is claimed at startup in either mode, and under
+`--stop-actuate` the config's GPIO outputs are never claimed either (the claim is
+dropped), so their lines stay as the hardware's own pulls hold them.
+
+`--stop-actuate` doesn't affect the systemd or hardware watchdogs (see
+[setup.md](setup.md#watchdogs)); under it, the outputs don't move anyway.
 
 ### How to tell it is on
 
@@ -84,7 +91,8 @@ attaching to a session that was started without them. Stop it first with
 `systemctl stop` (`SIGTERM`), Ctrl+C (`SIGINT`) and `./run.sh --kill`, which makes
 tmux hang up on the program (`SIGHUP`), now end it in order:
 
-1. The loops stop and are joined (publisher, samplers, consumer, stats).
+1. The loops stop and are joined (publisher, samplers, consumer, output
+   supervisor, stats).
 2. With stats on, the last stats window is written to the log (`Final stats:`)
    and published.
 3. The data recording is closed, so no file is left half written.
@@ -93,7 +101,32 @@ tmux hang up on the program (`SIGHUP`), now end it in order:
 
 Shutdown writes no output. Relays, servos and GPIO stay as they were, which is
 the safe state for a process that is only restarting. Nothing else holds the
-outputs, so a restart sets them up again as at any startup.
+outputs, so a restart sets them up again as at any startup: relays
+de-energized, GPIO pins unclaimed until the config arrives (a released line keeps
+the level it was last driven to until then; the relay hardware's pull resistors
+decide what an unclaimed pin does after a reboot).
+
+## Output limits and comms loss
+
+These run in every mode, bench or not. The per-node config
+(`nova/config/<node>`) can give each relay and GPIO output a maximum on-time
+(`max_on_ms`) and `on_comms_loss: safe`. The output supervisor checks every 50 ms:
+
+- An output on longer than its `max_on_ms` since it last left its safe level
+  goes back to it (reason `max_on_time`).
+- When no live `{"online":true}` heartbeat has arrived on
+  `nova/heartbeat/backend` within `heartbeat.timeout_ms`, or the backend's last
+  will (`{"online":false}`) or an MQTT connection loss is seen, every `safe`
+  output goes back to its safe level (reason `comms_loss`), and a command that
+  would move one off it is refused until a live heartbeat arrives. Retained
+  heartbeats don't count.
+- A trip latches: the output stays at its safe level until the next command for
+  it, and is listed in `tripped` in the retained `nova/config/<node>/status`.
+
+Safe is a GPIO level of 0 and a de-energized relay. Comms-loss supervision starts
+only once a config with a `heartbeat` section has arrived. A bench run without a
+backend that sends heartbeats should use a config without one, or publish the
+beats itself.
 
 ## Not done yet
 
