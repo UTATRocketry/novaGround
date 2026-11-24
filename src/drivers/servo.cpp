@@ -10,6 +10,7 @@
 
 #include "servo.hpp"
 #include <algorithm>
+#include <cstdio>
 
 #define ENABLE_DEBUG_OUTPUT // comment out to suppress debug level dumps
 
@@ -20,6 +21,17 @@ bool Adafruit_PWMServoDriver::begin(uint8_t prescale) {
     begun_ = false;
     if (!bus_.is_ready() || !bus_.attach(_i2caddr)) {
         std::cerr << "Failed to initialize I2C communication." << std::endl;
+        return false;
+    }
+    // Selecting an address succeeds whether or not a chip is there, so read a
+    // register to find out. A missing chip is left alone (begun_ stays false),
+    // and nothing reads or writes it again.
+    uint8_t mode1 = 0;
+    if (!bus_.read_reg8(_i2caddr, PCA9685_MODE1, mode1)) {
+        char addr[8];
+        std::snprintf(addr, sizeof addr, "0x%02X", _i2caddr);
+        std::cerr << "PCA9685 servo driver: no answer at I2C address " << addr << " ("
+                  << bus_.last_error() << ")" << std::endl;
         return false;
     }
 

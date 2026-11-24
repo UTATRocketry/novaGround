@@ -134,6 +134,9 @@ struct StatsIdentity {
     // "enabled": commands drive the outputs. "stopped": --stop-actuate, every
     // output write is dropped (core/actuation_guard.hpp).
     std::string actuation = "enabled";
+    // What hardware the build expects and what was found (core/hardware_check.hpp),
+    // as a JSON object. Empty: left out of the info message.
+    std::string hardware_json;
 };
 
 class StatsRegistry {

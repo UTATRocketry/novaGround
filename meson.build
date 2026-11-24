@@ -87,6 +87,10 @@ if have_paho
             # config and config-status topics) and keeps its own name
             # everywhere else. See docs/simulation.md.
             '-DNOVA_STANDS_IN_FOR="novaGround"',
+            # Everything is simulated: the relays and servos always are, the DAQ
+            # HATs only when the scenario lists some, so they aren't expected.
+            # See src/core/hardware_check.hpp.
+            '-DNOVA_EXPECTED_HARDWARE="relays,servo"',
             '-DNOVA_DEFAULT_SAMPLE_MS=100',
             '-DNOVA_DEFAULT_PUBLISH_MS=250',
         ],
@@ -194,6 +198,9 @@ executable(
     link_with: nova_core,
     cpp_args: common_cpp_args + [
         '-DNOVA_BUILD_ID="novaGround"',
+        # What this build's Pi is wired with, besides GPIO: a missing part is
+        # reported at startup and in nova-pi.sh status (src/core/hardware_check.hpp).
+        '-DNOVA_EXPECTED_HARDWARE="daq,relays,servo"',
         '-DNOVA_DEFAULT_SAMPLE_MS=1',
         '-DNOVA_DEFAULT_PUBLISH_MS=50',
     ],
@@ -207,6 +214,7 @@ executable(
     link_with: nova_core,
     cpp_args: common_cpp_args + [
         '-DNOVA_BUILD_ID="novaThermo"',
+        '-DNOVA_EXPECTED_HARDWARE="daq"',
         '-DNOVA_DEFAULT_SAMPLE_MS=100',
         '-DNOVA_DEFAULT_PUBLISH_MS=250',
     ],

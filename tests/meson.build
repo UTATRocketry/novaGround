@@ -30,6 +30,7 @@ nova_core_tests = executable(
         'test_io_config_controller.cpp',
         'test_node_topics.cpp',
         'test_sd_notify.cpp',
+        'test_hardware_check.cpp',
         '../src/sim/hardware_sim.cpp',
     ),
     link_with: sim_libs,

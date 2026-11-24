@@ -30,6 +30,7 @@ class TCA9535 : public RelayBank {
     std::chrono::milliseconds retry_delay_;
     bool ready_ = false;
     std::string last_error_;
+    std::chrono::steady_clock::time_point last_logged_at_{};
     // One register transaction sequence at a time: the command thread writes
     // the outputs while the state loop reads them back.
     std::mutex mutex_;

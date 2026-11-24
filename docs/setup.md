@@ -90,6 +90,44 @@ This builds three executables from the same code:
 | `novaThermo` | 100 ms | 250 ms | The thermocouple Pi (MCC 134) |
 | `novaMock` | 100 ms | 250 ms | The full program on simulated hardware (see [simulation.md](simulation.md)): development and simulator tests |
 
+### The hardware each build expects
+
+Each build knows what its Pi is wired with. It's part of the build, set next to
+`NOVA_BUILD_ID` in `meson.build` (`NOVA_EXPECTED_HARDWARE`):
+
+| Build | Expects |
+|---|---|
+| `novaGround` | GPIO, the DAQ HATs, the TCA9535 relay board (I2C 0x20) and the PCA9685 servo driver (I2C 0x40) |
+| `novaThermo` | GPIO and the DAQ HATs (MCC 134) |
+| `novaMock` | GPIO, relays and servos, all simulated. Its DAQ HATs come from the scenario, so they aren't expected. |
+
+At startup the program checks each part and logs one line for it, under
+`Hardware for <build>:`.
+
+- **GPIO is the only part every build needs.** Without `/dev/gpiochip0` the
+  program logs the error and exits with status 1.
+- **Any other missing part is logged as an error, and the program carries on
+  without it.** The log line starts with `ERROR`, and a
+  `HARDWARE MISSING: <parts>` line follows. Commands for that part are refused,
+  and its readings are left out.
+- **A part that's present but not expected is used, and the log says so.**
+- **The I2C chips must answer a register read to count as present.** Selecting
+  an I2C address succeeds even when nothing is there. A chip that doesn't
+  answer is never read or written again.
+- **Repeated I2C errors are logged once, then at most every 10 s.** The repeat
+  line says how many were left out. A chip that stops answering can't flood the
+  journal.
+
+The result is also written to `$NOVA_STATE_DIR/hardware.json` and is in the
+retained `nova/stats/<node>/info` message under `hardware`.
+`./nova-pi.sh status` shows it for each environment, in green when everything
+expected was found and in red when something wasn't:
+
+```
+                 hardware MISSING daq, expected on novaThermo (at 2026-11-24T17:00:00Z)
+                          found gpio
+```
+
 ## Run
 
 An MQTT broker must be reachable (default `localhost:1883`).

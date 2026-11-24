@@ -1,5 +1,6 @@
 ﻿#include "io_expander.hpp"
 
+#include <cstdio>
 #include <iostream>
 #include <thread>
 
@@ -11,6 +12,17 @@ TCA9535::TCA9535(I2cBus& bus, uint8_t address, std::chrono::milliseconds retry_d
     }
     if (!bus_.attach(device_address)) {
         set_error("Failed to set I2C device address");
+        return;
+    }
+    // Selecting an address succeeds whether or not a chip is there, so read a
+    // register to find out. A missing chip stays not ready and is never touched
+    // again.
+    uint8_t config = 0;
+    if (!bus_.read_reg8(device_address, CONFIG_PORT0, config)) {
+        char addr[8];
+        std::snprintf(addr, sizeof addr, "0x%02X", device_address);
+        set_error(std::string("TCA9535 relay board: no answer at I2C address ") + addr + " (" +
+                  bus_.last_error() + ")");
         return;
     }
     ready_ = true;
@@ -104,7 +116,15 @@ bool TCA9535::read_register(uint8_t reg, uint8_t& value) {
     return true;
 }
 
+// A repeated failure (a board that stopped answering, read back every state
+// tick) is logged the first time and then at most every 10 s.
 void TCA9535::set_error(const std::string& message) {
+    const auto now = std::chrono::steady_clock::now();
+    const bool repeat = message == last_error_ && now - last_logged_at_ < std::chrono::seconds(10);
     last_error_ = message;
+    if (repeat) {
+        return;
+    }
     std::cerr << message << std::endl;
+    last_logged_at_ = now;
 }

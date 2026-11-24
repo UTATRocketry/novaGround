@@ -32,8 +32,10 @@ struct Hardware {
 // relay de-energized (bit 1: the boards are active-low) and no GPIO pin claimed.
 // Pins are claimed only when the per-node config arrives
 // (controllers/gpio_controller.hpp); until then the hardware's own pull
-// resistors hold them. A device that is missing is logged and left null; it
-// never stops the program.
+// resistors hold them. A device that is missing (an I2C chip must answer a
+// register read to count) is left null; this never stops. main() then checks
+// what was found against what the build expects (core/hardware_check.hpp) and
+// stops only when there is no GPIO.
 //
 // Which hardware this is gets decided when building. A target links exactly one
 // implementation:

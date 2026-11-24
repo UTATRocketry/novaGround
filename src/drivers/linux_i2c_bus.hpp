@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 #include "interfaces/i2c_bus.hpp"
@@ -37,5 +39,13 @@ private:
     Transfer transfer_;
     std::string last_error_;
 
+    // Logging of repeated failures (see set_error).
+    static constexpr std::chrono::seconds kRepeatInterval{10};
+    std::mutex log_mutex_;
+    std::string last_logged_;
+    std::chrono::steady_clock::time_point last_logged_at_{};
+    unsigned long suppressed_ = 0;
+
+    static std::string describe(const char* what, uint8_t address, int reg);
     void set_error(const std::string& message);
 };

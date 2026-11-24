@@ -59,6 +59,20 @@ BOOST_AUTO_TEST_CASE(begin_fails_without_touching_the_chip_when_the_bus_is_unusa
     BOOST_TEST(no_addr.writes.empty());
 }
 
+BOOST_AUTO_TEST_CASE(begin_fails_without_writing_when_no_chip_answers_at_the_address) {
+    // Selecting an address works with nothing there (Linux's I2C_SLAVE does),
+    // so begin() reads MODE1 first. novaThermo has no servo driver: before this,
+    // it came up "ready" and every state tick read 16 channels from nothing.
+    bus.fail_reads = true;
+    BOOST_TEST(!pwm.begin());
+    BOOST_TEST(!pwm.is_ready());
+    BOOST_TEST(bus.writes.empty());
+    pwm.setPWM(0, 0, 300);
+    PwmChannelReadback readback;
+    BOOST_TEST(!pwm.read_channel(0, readback));
+    BOOST_TEST(bus.writes.empty());
+}
+
 BOOST_AUTO_TEST_CASE(a_driver_that_was_never_started_ignores_everything) {
     BOOST_TEST(!pwm.is_ready());
     pwm.setPWM(0, 0, 300);

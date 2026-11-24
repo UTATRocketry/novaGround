@@ -20,6 +20,23 @@ BOOST_AUTO_TEST_CASE(ready_when_the_bus_can_address_the_chip) {
     BOOST_TEST(bus.attached[0] == kAddr);
 }
 
+BOOST_AUTO_TEST_CASE(not_ready_when_no_chip_answers_at_the_address) {
+    // Selecting an address works with nothing there (Linux's I2C_SLAVE does),
+    // so the board is only ready if a register read answers. novaThermo has no
+    // relay board: it must come up without one, and never touch the bus again.
+    FakeI2cBus bus;
+    bus.fail_reads = true;
+    TCA9535 chip(bus, kAddr, kNoDelay);
+    BOOST_TEST(!chip.is_ready());
+    BOOST_TEST(chip.last_error().find("no answer at I2C address 0x20") != std::string::npos);
+    BOOST_TEST(chip.last_error().find("fake read failure") != std::string::npos);
+    BOOST_TEST(!chip.configure_port(0, 0x00));
+    BOOST_TEST(!chip.write_output(std::bitset<16>(0xFFFF)));
+    std::bitset<16> state;
+    BOOST_TEST(!chip.read_output(state));
+    BOOST_TEST(bus.writes.empty());
+}
+
 BOOST_AUTO_TEST_CASE(not_ready_when_the_bus_is_not_open_or_cannot_address) {
     FakeI2cBus closed;
     closed.ready = false;

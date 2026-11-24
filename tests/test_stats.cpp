@@ -317,6 +317,14 @@ BOOST_AUTO_TEST_CASE(the_stats_message_is_measurements_only) {
     BOOST_TEST(number(relay2.at("received_to_done_ms").at("total").at("count")) == 2.0);
 }
 
+BOOST_AUTO_TEST_CASE(the_info_message_carries_the_hardware_report_as_an_object) {
+    StatsIdentity id = identity();
+    id.hardware_json = R"({"build_id":"novaTest","missing":["relays"]})";
+    StatsRegistry stats(id, true);
+    auto info = parse(stats.identity_json());
+    BOOST_TEST(text(info.at("hardware").at("missing").as_array().at(0)) == "relays");
+}
+
 BOOST_AUTO_TEST_CASE(the_info_message_has_identity_loops_and_how_to_read_the_stats) {
     StatsRegistry stats(identity(), true);
     stats.loop("publisher", 250);
@@ -344,6 +352,8 @@ BOOST_AUTO_TEST_CASE(the_info_message_has_identity_loops_and_how_to_read_the_sta
     BOOST_TEST(number(how.at("overrun_period_factor")) == LoopStats::kOverrunFactor);
     BOOST_TEST(number(how.at("buckets_per_octave")) == Histogram::kBucketsPerOctave);
     BOOST_TEST(number(how.at("relative_error")) == Histogram::kRelativeError);
+
+    BOOST_TEST(!info.contains("hardware"));  // none given
 
     // It describes the process, not the second: asking again changes nothing.
     BOOST_TEST(stats.identity_json() == stats.identity_json());

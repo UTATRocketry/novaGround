@@ -136,6 +136,25 @@ def watchdog_state():
     }
 
 
+def print_hardware(hw, G, Y, R, X):
+    """One line for what novaGround found at its last start against what its
+    build expects: what's missing in red, what's there but not expected in
+    yellow."""
+    parts = hw.get("parts") or {}
+    missing = hw.get("missing") or []
+    found = [n for n, p in parts.items() if p.get("found")]
+    extra = [n for n, p in parts.items() if p.get("found") and not p.get("expected")]
+    when = " (at %s)" % hw["time"] if hw.get("time") else ""
+    if missing:
+        print(R + "                 hardware MISSING %s, expected on %s%s" % (", ".join(missing), hw.get("build_id"), when) + X)
+        if found:
+            print("                          found %s" % ", ".join(found))
+    else:
+        print(G + "                 hardware %s OK%s" % (", ".join(found) or "-", when) + X)
+    if extra:
+        print(Y + "                          also found %s, not expected on %s" % (", ".join(extra), hw.get("build_id")) + X)
+
+
 def snapshot(mode):
     DIRS = {"prod": E["PROD_DIR"], "dev": E["DEV_DIR"]}
     pi = read_env(E["PI_ENV"]) or {}
@@ -172,6 +191,9 @@ def snapshot(mode):
             "checkout": None,
             "built": None,
             "lastUpload": read_json(os.path.join(E["STATE_ROOT"], env, "last_upload.json")),
+            # What the build expects and what it found at its last start
+            # (src/core/hardware_check.hpp).
+            "hardware": read_json(os.path.join(E["STATE_ROOT"], env, "hardware.json")),
         }
         inst["backendHealth"] = health(inst["backend"])
         if os.path.isdir(os.path.join(d, ".git")):
@@ -258,6 +280,9 @@ def snapshot(mode):
         if up:
             uc = G if up.get("ok") else R
             print("                 last upload %s %s%s%s" % (up.get("time"), uc, "OK" if up.get("ok") else "FAILED", X))
+        hw = inst["hardware"]
+        if hw:
+            print_hardware(hw, G, Y, R, X)
     print("    console      %s" % (console or "(not set yet)"))
     w = snap["watchdog"]
     if w["configTxt"] and w["systemConf"] and w["running"]:

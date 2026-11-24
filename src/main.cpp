@@ -4,6 +4,9 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stop_token>
@@ -23,6 +26,7 @@
 #include "core/actuator_state.hpp"
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
+#include "core/hardware_check.hpp"
 #include "core/node_topics.hpp"
 #include "core/output_supervisor.hpp"
 #include "core/stats.hpp"
@@ -65,6 +69,13 @@ using namespace std::chrono;
 #define NOVA_ROUTING_NODE NOVA_BUILD_ID
 #endif
 
+// The hardware this build is made for, besides GPIO, which every build needs
+// (core/hardware_check.hpp). Part of what the build is, set next to
+// NOVA_BUILD_ID in meson.build; a missing part is reported, never enforced.
+#ifndef NOVA_EXPECTED_HARDWARE
+#define NOVA_EXPECTED_HARDWARE ""
+#endif
+
 namespace {
 const std::string kCommandSourceId = "novaOps";
 const int kGpioSampleIntervalMs = 50;
@@ -103,9 +114,41 @@ struct App {
     std::shared_ptr<mqtt::async_client> cli;
 };
 
+// $NOVA_STATE_DIR/hardware.json: what this build expects and found, for
+// nova-pi.sh status. Written at each start; without NOVA_STATE_DIR, nothing is.
+void write_hardware_state(const hardware_check::Report& report) {
+    const char* dir = std::getenv("NOVA_STATE_DIR");
+    if (!dir || !*dir) {
+        return;
+    }
+    boost::json::object doc = report.to_json();
+    char now[32];
+    const std::time_t t = std::time(nullptr);
+    std::strftime(now, sizeof now, "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&t));
+    doc["time"] = now;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::filesystem::path target = std::filesystem::path(dir) / "hardware.json";
+    const std::filesystem::path tmp = std::filesystem::path(dir) / "hardware.json.tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out) {
+            std::cerr << "Could not write " << tmp << std::endl;
+            return;
+        }
+        out << boost::json::serialize(doc) << "
+";
+    }
+    std::filesystem::rename(tmp, target, ec);
+    if (ec) {
+        std::cerr << "Could not write " << target << ": " << ec.message() << std::endl;
+    }
+}
+
 // Brings up the hardware, the logger, the controllers and the MQTT client
 // (connect_broker connects it).
-// Starts no threads: that is run().
+// Starts no threads: that is run(). Returns null if this Pi has no GPIO, the
+// one piece of hardware every build needs.
 std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     auto app = std::make_unique<App>();
     app->config = config;
@@ -122,6 +165,35 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
 
     // --stats and --stats-ms were read (and any bad value reported and
     // ignored) by parse_args.
+    // The hardware first: what it found goes in the stats info message. A
+    // missing part is logged and left out; only missing GPIO stops the program.
+    app->hardware = build_hardware();
+    hardware_check::Found found;
+    found.daq_hats = app->hardware.daq_hats;
+    found.relays = app->hardware.relays != nullptr;
+    found.servo = app->hardware.servo != nullptr;
+    found.gpio = app->hardware.gpio != nullptr;
+    const hardware_check::Report hw_report =
+        hardware_check::check(NOVA_BUILD_ID, NOVA_EXPECTED_HARDWARE, found);
+    const auto missing = hw_report.missing();
+    // On stderr when something is missing, so --verbosity 0 does not hide it.
+    std::ostream& hw_out = missing.empty() ? std::cout : std::cerr;
+    hw_out << "Hardware for " << NOVA_BUILD_ID << ":" << std::endl;
+    for (const auto& line : hw_report.lines()) {
+        hw_out << line << std::endl;
+    }
+    if (!missing.empty()) {
+        std::string list;
+        for (const auto& name : missing) {
+            list += (list.empty() ? "" : ", ") + name;
+        }
+        std::cerr << "HARDWARE MISSING: " << list << " (expected on " << NOVA_BUILD_ID << ")" << std::endl;
+    }
+    write_hardware_state(hw_report);
+    if (!hw_report.gpio_ok()) {
+        return nullptr;
+    }
+
     const bool stats_on = config.stats;
     const int stats_interval_ms = config.stats_interval_ms;
     StatsIdentity identity;
@@ -129,6 +201,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     identity.build_id = NOVA_BUILD_ID;
     identity.interval_ms = stats_interval_ms;
     identity.actuation = config.stop_actuate ? "stopped" : "enabled";
+    identity.hardware_json = boost::json::serialize(hw_report.to_json());
     app->stats = std::make_unique<StatsRegistry>(std::move(identity), stats_on);
     if (stats_on) {
         std::cout << "Stats: on, every " << stats_interval_ms << " ms to " << stats_topic(config.node_id)
@@ -159,7 +232,6 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
                   << ", config on " << app->topics.config << std::endl;
     }
 
-    app->hardware = build_hardware();
     Hardware& hw = app->hardware;
 
     // No GPIO output is configured until the config arrives, so a recording
@@ -519,6 +591,10 @@ int main(int argc, char* argv[]) {
     }).detach();
 
     auto app = build_app(parsed.config);
+    if (!app) {
+        std::cerr << "No GPIO on this Pi (/dev/gpiochip0): stopping." << std::endl;
+        return 1;
+    }
 
     run(*app, stop.get_token());
     finish(*app);

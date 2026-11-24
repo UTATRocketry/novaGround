@@ -276,6 +276,9 @@ std::string StatsRegistry::identity_json() {
     root["started_ms"] = started_ms_;
     root["stats_interval_ms"] = identity_.interval_ms;
     root["actuation"] = identity_.actuation;
+    if (!identity_.hardware_json.empty()) {
+        root["hardware"] = json::parse(identity_.hardware_json);
+    }
 
     json::object loops;
     {

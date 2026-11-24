@@ -423,6 +423,28 @@ assert snap["instances"]["prod"]["state"] != "active", snap
 PY
 }
 
+@test "status shows the hardware novaGround found against what its build expects" {
+  python3 -c 'import pwd' 2>/dev/null || skip "needs a POSIX python3"
+  make_installed_pi
+  fake_active novaGround@dev.service
+  mkdir -p "$NOVA_PI_ROOT/var/lib/nova/dev"
+  # What novaThermo writes when its DAQ HAT is missing (src/core/hardware_check.hpp).
+  cat > "$NOVA_PI_ROOT/var/lib/nova/dev/hardware.json" <<'JSON'
+{"build_id":"novaThermo","parts":{"gpio":{"expected":true,"found":true},"daq":{"expected":true,"found":false},"relays":{"expected":false,"found":false},"servo":{"expected":false,"found":false}},"missing":["daq"],"time":"2026-11-24T17:00:00Z"}
+JSON
+  run "$NP" status --json
+  [ "$status" -eq 0 ]
+  python3 - "$output" <<'PY'
+import json, sys
+hw = json.loads(sys.argv[1])["instances"]["dev"]["hardware"]
+assert hw["missing"] == ["daq"], hw
+PY
+  run "$NP" status
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hardware MISSING daq, expected on novaThermo"* ]]
+  [[ "$output" == *"found gpio"* ]]
+}
+
 @test "status reads NOVA_CONSOLE given as just a host" {
   python3 -c 'import pwd' 2>/dev/null || skip "needs a POSIX python3"
   make_installed_pi
