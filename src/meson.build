@@ -11,6 +11,8 @@ core_src += files(
   'controllers/relay_controller.cpp',
   'controllers/servo_controller.cpp',
   'controllers/gpio_controller.cpp',
+  'controllers/io_config_controller.cpp',
+  'controllers/supervisor_loop.cpp',
   'controllers/sampler.cpp',
   'sim/waveform.cpp',
   'sim/scenario.cpp',

@@ -165,6 +165,15 @@ public:
     void count_actuator_read_errors(std::uint64_t n);
     // An output write (or direction change) that --stop-actuate dropped.
     void count_stopped_write();
+    // A GPIO claim (configure_output / configure_input) or write that failed.
+    void count_gpio_claim_failure();
+    void count_gpio_write_failure();
+    // A command refused: an actuator command on the broadcast topic, a command
+    // for a pin that is not a configured output, or one that would move an
+    // output off its safe level while the backend heartbeat is lost.
+    void count_refused_command();
+    // An output returned to its safe level by the output supervisor.
+    void count_output_trip();
 
     // The retained info message, as JSON text.
     std::string identity_json();
@@ -192,6 +201,10 @@ private:
     std::uint64_t daq_read_errors_ = 0;
     std::uint64_t actuator_read_errors_ = 0;
     std::uint64_t stopped_writes_ = 0;
+    std::uint64_t gpio_claim_failures_ = 0;
+    std::uint64_t gpio_write_failures_ = 0;
+    std::uint64_t refused_commands_ = 0;
+    std::uint64_t output_trips_ = 0;
     std::uint64_t stats_seq_ = 0;
 
     std::mutex seq_mutex_;

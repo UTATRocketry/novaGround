@@ -28,9 +28,12 @@ struct Hardware {
     std::unique_ptr<DigitalIo> gpio;
 };
 
-// Brings the hardware up and puts the outputs in their startup state: all
-// relays on, the output pins low. A device that is missing is logged and left
-// null; it never stops the program.
+// Brings the hardware up and puts the outputs in their startup state: every
+// relay de-energized (bit 1: the boards are active-low) and no GPIO pin claimed.
+// Pins are claimed only when the per-node config arrives
+// (controllers/gpio_controller.hpp); until then the hardware's own pull
+// resistors hold them. A device that is missing is logged and left null; it
+// never stops the program.
 //
 // Which hardware this is gets decided when building. A target links exactly one
 // implementation:
@@ -38,5 +41,4 @@ struct Hardware {
 //                              (novaGround, novaThermo)
 //   sim/hardware_sim.cpp       simulated: libdaqhats_sim and in-memory outputs
 //                              (novaMock)
-Hardware build_hardware(const std::vector<unsigned int>& output_pins,
-                        const std::vector<unsigned int>& input_pins);
+Hardware build_hardware();

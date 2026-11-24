@@ -9,8 +9,7 @@
 // The simulated machine. The DAQ is the real MccDaqHats driver, which novaMock
 // links against libdaqhats_sim instead of MCC's library; the outputs are kept in
 // memory.
-Hardware build_hardware(const std::vector<unsigned int>& output_pins,
-                        const std::vector<unsigned int>& input_pins) {
+Hardware build_hardware() {
     Hardware hw;
     std::cout << "Simulated hardware: HATs from the scenario, outputs kept in memory." << std::endl;
 
@@ -19,7 +18,8 @@ Hardware build_hardware(const std::vector<unsigned int>& output_pins,
 
     hw.servo = std::make_unique<SimPwmDriver>();
 
-    // The same startup state as the real chips: all relays on, output pins low.
+    // The same startup state as the real chips: every relay de-energized (bit 1),
+    // no GPIO pin claimed until the config arrives.
     auto relays = std::make_unique<SimRelayBank>();
     for (int i = 0; i < 16; i++) {
         hw.relay_state.set(i, true);
@@ -27,14 +27,6 @@ Hardware build_hardware(const std::vector<unsigned int>& output_pins,
     relays->write_output(hw.relay_state);
     hw.relays = std::move(relays);
 
-    auto gpio = std::make_unique<SimDigitalIo>(daqhats_sim::gpio_inputs());
-    for (auto pin : output_pins) {
-        gpio->set_direction(pin, "out");
-        gpio->write(pin, 0);
-    }
-    for (auto pin : input_pins) {
-        gpio->set_direction(pin, "in");
-    }
-    hw.gpio = std::move(gpio);
+    hw.gpio = std::make_unique<SimDigitalIo>(daqhats_sim::gpio_inputs());
     return hw;
 }

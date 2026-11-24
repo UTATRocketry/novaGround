@@ -59,21 +59,60 @@ uint16_t SimPwmDriver::microseconds(uint8_t channel) const {
 SimDigitalIo::SimDigitalIo(std::map<int, int> input_levels)
     : input_levels_(std::move(input_levels)) {}
 
-bool SimDigitalIo::set_direction(int pin, const std::string& direction) {
+bool SimDigitalIo::configure_output(int pin, int level) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (direction != "in" && direction != "out") {
-        std::cerr << "Invalid direction for GPIO " << pin << ": " << direction << "\n";
+    auto it = claimed_.find(pin);
+    if (it != claimed_.end() && it->second == Direction::Out) {
+        // Already an output: like the real driver, just set the level.
+        if (failing_writes_[pin]) {
+            std::cerr << "Simulated GPIO: write to " << pin << " failed (injected)" << std::endl;
+            return false;
+        }
+        output_levels_[pin] = level;
+        return true;
+    }
+    claimed_.erase(pin);  // an input is released first
+    if (failing_claims_[pin]) {
+        std::cerr << "Simulated GPIO: claim of " << pin << " failed (injected)" << std::endl;
         return false;
     }
-    directions_[pin] = direction;
+    claimed_[pin] = Direction::Out;
+    output_levels_[pin] = level;
+    return true;
+}
+
+bool SimDigitalIo::configure_input(int pin) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = claimed_.find(pin);
+    if (it != claimed_.end() && it->second == Direction::In) {
+        return true;
+    }
+    claimed_.erase(pin);
+    if (failing_claims_[pin]) {
+        std::cerr << "Simulated GPIO: claim of " << pin << " failed (injected)" << std::endl;
+        return false;
+    }
+    claimed_[pin] = Direction::In;
+    return true;
+}
+
+bool SimDigitalIo::release(int pin) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // The line keeps the level it was last driven to, as on the Pi; it is no
+    // longer this program's to drive.
+    claimed_.erase(pin);
     return true;
 }
 
 bool SimDigitalIo::write(int pin, int value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = directions_.find(pin);
-    if (it == directions_.end() || it->second != "out") {
-        std::cerr << "Pin " << pin << " not configured as output\n";
+    auto it = claimed_.find(pin);
+    if (it == claimed_.end() || it->second != Direction::Out) {
+        std::cerr << "Pin " << pin << " not configured as output" << std::endl;
+        return false;
+    }
+    if (failing_writes_[pin]) {
+        std::cerr << "Simulated GPIO: write to " << pin << " failed (injected)" << std::endl;
         return false;
     }
     output_levels_[pin] = value;
@@ -82,9 +121,9 @@ bool SimDigitalIo::write(int pin, int value) {
 
 bool SimDigitalIo::read(int pin, int& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = directions_.find(pin);
-    if (it == directions_.end() || it->second != "in") {
-        std::cerr << "Pin " << pin << " not configured as input\n";
+    auto it = claimed_.find(pin);
+    if (it == claimed_.end() || it->second != Direction::In) {
+        std::cerr << "Pin " << pin << " not configured as input" << std::endl;
         return false;
     }
     auto level = input_levels_.find(pin);
@@ -95,8 +134,8 @@ bool SimDigitalIo::read(int pin, int& value) {
 std::vector<int> SimDigitalIo::get_input_pins() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> pins;
-    for (const auto& [pin, direction] : directions_) {
-        if (direction == "in") pins.push_back(pin);
+    for (const auto& [pin, direction] : claimed_) {
+        if (direction == Direction::In) pins.push_back(pin);
     }
     return pins;
 }
@@ -104,8 +143,8 @@ std::vector<int> SimDigitalIo::get_input_pins() {
 std::map<int, int> SimDigitalIo::read_all_inputs() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::map<int, int> result;
-    for (const auto& [pin, direction] : directions_) {
-        if (direction != "in") continue;
+    for (const auto& [pin, direction] : claimed_) {
+        if (direction != Direction::In) continue;
         auto level = input_levels_.find(pin);
         result[pin] = level == input_levels_.end() ? 0 : level->second;
     }
@@ -115,8 +154,8 @@ std::map<int, int> SimDigitalIo::read_all_inputs() {
 std::map<int, int> SimDigitalIo::read_all_outputs() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::map<int, int> result;
-    for (const auto& [pin, direction] : directions_) {
-        if (direction != "out") continue;
+    for (const auto& [pin, direction] : claimed_) {
+        if (direction != Direction::Out) continue;
         auto level = output_levels_.find(pin);
         result[pin] = level == output_levels_.end() ? 0 : level->second;
     }
@@ -127,4 +166,19 @@ int SimDigitalIo::output_level(int pin) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = output_levels_.find(pin);
     return it == output_levels_.end() ? 0 : it->second;
+}
+
+bool SimDigitalIo::claimed(int pin) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return claimed_.count(pin) > 0;
+}
+
+void SimDigitalIo::fail_claims_of(int pin, bool fail) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    failing_claims_[pin] = fail;
+}
+
+void SimDigitalIo::fail_writes_to(int pin, bool fail) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    failing_writes_[pin] = fail;
 }

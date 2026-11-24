@@ -1,2 +1,4 @@
 option('hardware', type: 'boolean', value: true,
        description: 'Build the Pi executables (needs wiringPi, libgpiod, paho and the MCC HAT libraries). Off: only nova_core and its tests.')
+option('gpio_sim_chip', type: 'string', value: '',
+       description: 'A gpio-sim chip (e.g. /dev/gpiochip2) for the LinuxGpio test; empty skips it. See tests/README.md.')

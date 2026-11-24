@@ -25,6 +25,11 @@ nova_core_tests = executable(
         'test_daqhats_sim.cpp',
         'test_sim_actuators.cpp',
         'test_sim_hardware.cpp',
+        'test_pi_io_config.cpp',
+        'test_output_supervisor.cpp',
+        'test_io_config_controller.cpp',
+        'test_node_topics.cpp',
+        'test_sd_notify.cpp',
         '../src/sim/hardware_sim.cpp',
     ),
     link_with: sim_libs,
@@ -41,3 +46,20 @@ test(
     find_program('bash'),
     args: [files('scripts_contract.sh'), meson.project_source_root()],
 )
+
+# LinuxGpio, the real GPIO driver, against the kernel's gpio-sim module. Built
+# wherever libgpiod v1 is installed (it never is in CI); it skips itself unless
+# NOVA_GPIO_SIM_CHIP names a gpio-sim chip. tests/README.md has the setup.
+gpiod_test_dep = dependency('libgpiod', version: ['>=1.6', '<2'], required: false)
+if gpiod_test_dep.found()
+    linux_gpio_tests = executable(
+        'linux_gpio_tests',
+        files('test_linux_gpio.cpp', '../src/drivers/linux_gpio.cpp'),
+        dependencies: [gpiod_test_dep],
+        include_directories: include,
+    )
+    # -Dgpio_sim_chip=/dev/gpiochipN, or NOVA_GPIO_SIM_CHIP in the environment.
+    gpio_sim_chip = get_option('gpio_sim_chip')
+    gpio_sim_env = gpio_sim_chip != '' ? ['NOVA_GPIO_SIM_CHIP=' + gpio_sim_chip] : []
+    test('linux_gpio', linux_gpio_tests, suite: 'hardware', env: gpio_sim_env)
+endif

@@ -12,8 +12,7 @@ namespace {
 const int kI2CAddr = 0x20;
 }
 
-Hardware build_hardware(const std::vector<unsigned int>& output_pins,
-                        const std::vector<unsigned int>& input_pins) {
+Hardware build_hardware() {
     Hardware hw;
 
     hw.daq = std::make_unique<MccDaqHats>();
@@ -46,15 +45,8 @@ Hardware build_hardware(const std::vector<unsigned int>& output_pins,
     }
 
     try {
-        auto gpio = std::make_unique<LinuxGpio>("/dev/gpiochip0");
-        for (auto pin : output_pins) {
-            gpio->set_direction(pin, "out");
-            gpio->write(pin, 0);
-        }
-        for (auto pin : input_pins) {
-            gpio->set_direction(pin, "in");
-        }
-        hw.gpio = std::move(gpio);
+        // No pin is claimed here: the per-node config says which ones to use.
+        hw.gpio = std::make_unique<LinuxGpio>("/dev/gpiochip0");
     } catch (const std::exception& e) {
         std::cerr << "GPIO Manager initialization failed: " << e.what() << std::endl;
     }

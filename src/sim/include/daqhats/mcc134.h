@@ -22,6 +22,7 @@ extern "C" {
 #define TC_TYPE_S 5
 #define TC_TYPE_B 6
 #define TC_TYPE_N 7
+#define TC_DISABLED 0xFF
 
 int mcc134_open(uint8_t address);
 int mcc134_tc_type_write(uint8_t address, uint8_t channel, uint8_t type);

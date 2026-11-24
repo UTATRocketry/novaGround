@@ -149,6 +149,13 @@ void set_clock(std::function<double()> seconds) {
     std::lock_guard<std::mutex> lock(s.mutex);
     s.clock = std::move(seconds);
 }
+
+int tc_type(int address, int channel) {
+    State& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    auto it = s.tc_types.find({address, channel});
+    return it == s.tc_types.end() ? -1 : it->second;
+}
 }  // namespace daqhats_sim
 
 extern "C" {

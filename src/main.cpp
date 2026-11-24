@@ -1,4 +1,4 @@
-﻿#include "mqtt/async_client.h"
+#include "mqtt/async_client.h"
 
 #include <signal.h>
 
@@ -13,19 +13,24 @@
 
 #include "controllers/data_file_controller.hpp"
 #include "controllers/gpio_controller.hpp"
+#include "controllers/io_config_controller.hpp"
 #include "controllers/loops.hpp"
 #include "controllers/relay_controller.hpp"
 #include "controllers/sampler.hpp"
 #include "controllers/servo_controller.hpp"
+#include "controllers/supervisor_loop.hpp"
 #include "core/actuation_guard.hpp"
 #include "core/actuator_state.hpp"
 #include "core/command_router.hpp"
 #include "core/data_logger.hpp"
+#include "core/node_topics.hpp"
+#include "core/output_supervisor.hpp"
 #include "core/stats.hpp"
 #include "core/telemetry.hpp"
 #include "interfaces/hardware.hpp"
 #include "utils/cli.hpp"
 #include "utils/interruptible_sleep.hpp"
+#include "utils/sd_notify.hpp"
 
 using namespace std::chrono;
 
@@ -48,8 +53,19 @@ using namespace std::chrono;
 #define NOVA_DEFAULT_PUBLISH_MS 50
 #endif
 
+// The node this build takes commands and config for. Its own name, except in a
+// build that stands in for another node: novaMock sets
+// NOVA_STANDS_IN_FOR="novaGround" (meson.build), so it acts on novaGround's
+// commands and config while keeping its own name everywhere else (client ID,
+// telemetry source, stats and state topics, CSV names). Identity, like
+// NOVA_BUILD_ID, not a setting.
+#ifdef NOVA_STANDS_IN_FOR
+#define NOVA_ROUTING_NODE NOVA_STANDS_IN_FOR
+#else
+#define NOVA_ROUTING_NODE NOVA_BUILD_ID
+#endif
+
 namespace {
-const std::string kCommandTopic = "nova/command";
 const std::string kCommandSourceId = "novaOps";
 const int kGpioSampleIntervalMs = 50;
 
@@ -62,42 +78,33 @@ struct App {
     TelemetryStore telemetry;
     // Declared before the controllers and router that report into it.
     std::unique_ptr<StatsRegistry> stats;
+    NodeTopics topics;
 
-    std::vector<unsigned int> output_pins = {17, 27, 22};
-    std::vector<unsigned int> input_pins = {5, 6};
     Hardware hardware;
     // --stop-actuate: the drivers the controllers write through. Declared after
     // `hardware`, which they wrap, and before the controllers that use them.
     std::unique_ptr<StoppedRelayBank> stopped_relays;
     std::unique_ptr<StoppedPwmDriver> stopped_servo;
     std::unique_ptr<StoppedDigitalIo> stopped_gpio;
+    // The output limits, and the relay and GPIO drivers wrapped by them (above
+    // the --stop-actuate wrappers, so a trip is dropped by those too).
+    std::unique_ptr<OutputSupervisor> supervisor;
+    std::unique_ptr<SupervisedRelayBank> supervised_relays;
+    std::unique_ptr<SupervisedDigitalIo> supervised_gpio;
 
     std::unique_ptr<DataLogger> logger;
     std::unique_ptr<ServoController> servo_controller;
     std::unique_ptr<RelayController> relay_controller;
     std::unique_ptr<GpioController> gpio_controller;
+    std::unique_ptr<IoConfigController> io_config;
     std::unique_ptr<DataFileController> data_file_controller;
     std::unique_ptr<CommandRouter> router;
+    std::unique_ptr<MessageDispatcher> dispatcher;
     std::shared_ptr<mqtt::async_client> cli;
 };
 
-std::vector<std::string> actuator_log_headers(const std::vector<unsigned int>& output_pins) {
-    std::vector<std::string> headers;
-    headers.push_back("timestamp");
-    for (unsigned int pin : output_pins) {
-        headers.push_back("gpio_" + std::to_string(pin));
-    }
-    for (int i = 0; i < 16; ++i) {
-        headers.push_back("relay_" + std::to_string(i));
-    }
-    for (int i = 0; i < 16; ++i) {
-        headers.push_back("servo_" + std::to_string(i));
-    }
-    headers.push_back("type_id");
-    return headers;
-}
-
-// Brings up the hardware, the logger, the controllers and the MQTT connection.
+// Brings up the hardware, the logger, the controllers and the MQTT client
+// (connect_broker connects it).
 // Starts no threads: that is run().
 std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     auto app = std::make_unique<App>();
@@ -134,7 +141,8 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     if (config.stop_actuate) {
         // On stderr so --verbosity 0 does not hide it.
         std::cerr << "Actuation: STOPPED (--stop-actuate). Commands are checked, routed and timed, but no\n"
-                  << "output is written. Outputs are still set up at startup, as always." << std::endl;
+                  << "output is written, and no GPIO output is claimed. The relays are still set to their\n"
+                  << "startup state (de-energized), as always." << std::endl;
     }
     std::cout << "Broker: " << broker_address << std::endl;
     std::cout << "Backend: " << backend_base << "  (uploads to " << app->upload_url << ")" << std::endl;
@@ -145,27 +153,25 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
         std::cout << "Publish interval (ms): " << config.publish_interval_ms << std::endl;
     }
 
-    app->hardware = build_hardware(app->output_pins, app->input_pins);
+    app->topics = NodeTopics::for_node(NOVA_ROUTING_NODE);
+    if (std::string(NOVA_ROUTING_NODE) != config.node_id) {
+        std::cout << "Stands in for " << NOVA_ROUTING_NODE << ": commands on " << app->topics.command_node
+                  << ", config on " << app->topics.config << std::endl;
+    }
+
+    app->hardware = build_hardware();
     Hardware& hw = app->hardware;
 
-    std::vector<int> gpio_pins_for_logging;
-    gpio_pins_for_logging.reserve(app->output_pins.size());
-    for (unsigned int pin : app->output_pins) {
-        gpio_pins_for_logging.push_back(static_cast<int>(pin));
-    }
+    // No GPIO output is configured until the config arrives, so a recording
+    // started before it has no GPIO columns (IoConfigController sets them).
     app->logger = std::make_unique<DataLogger>("data",
                                                build_sensor_headers(hw.daq_hats),
-                                               actuator_log_headers(app->output_pins),
-                                               gpio_pins_for_logging,
+                                               actuator_log_headers({}),
+                                               std::vector<int>{},
                                                config.node_id);
 
     // Tell the logger the state the hardware started in.
     app->logger->update_relay_state(hw.relay_state);
-    if (hw.gpio) {
-        for (int pin : gpio_pins_for_logging) {
-            app->logger->update_gpio(pin, 0);
-        }
-    }
 
     // Register every loop now: the retained info message, published on connect,
     // lists them with their configured periods. (No-ops when stats are off.)
@@ -176,6 +182,7 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     if (hw.gpio) {
         app->stats->loop("gpio_sampler", kGpioSampleIntervalMs);
     }
+    app->stats->loop("supervisor", kSupervisorIntervalMs);
 
     // What the controllers write through: the drivers themselves, or, with
     // --stop-actuate, wrappers that drop every write. Reads (the state topic,
@@ -198,57 +205,130 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
         }
     }
 
+    app->supervisor = std::make_unique<OutputSupervisor>();
+    app->supervisor->set_stats(app->stats.get());
+    if (relays_out) {
+        app->supervised_relays = std::make_unique<SupervisedRelayBank>(
+            *relays_out, *app->supervisor, hw.relay_state, app->stats.get());
+        relays_out = app->supervised_relays.get();
+    }
+    if (gpio_out) {
+        app->supervised_gpio = std::make_unique<SupervisedDigitalIo>(*gpio_out, *app->supervisor, app->stats.get());
+        gpio_out = app->supervised_gpio.get();
+    }
+
     app->servo_controller = std::make_unique<ServoController>(servo_out, &app->telemetry, app->logger.get());
     app->relay_controller = std::make_unique<RelayController>(relays_out, &app->telemetry, app->logger.get());
     if (hw.relays) {
         app->relay_controller->set_initial_state(hw.relay_state);
     }
-    app->gpio_controller = std::make_unique<GpioController>(gpio_out, app->logger.get());
+    app->relay_controller->set_supervisor(app->supervisor.get());
+    app->gpio_controller = std::make_unique<GpioController>(gpio_out, app->logger.get(), app->stats.get());
+    app->gpio_controller->set_supervisor(app->supervisor.get());
     app->data_file_controller = std::make_unique<DataFileController>(app->logger.get(), app->upload_url);
+    app->io_config = std::make_unique<IoConfigController>(app->gpio_controller.get(),
+                                                          hw.daq.get(),
+                                                          hw.daq_hats,
+                                                          app->supervisor.get(),
+                                                          app->logger.get());
 
-    app->router = std::make_unique<CommandRouter>(kCommandSourceId);
-    app->router->set_stats(app->stats.get());
     ServoController* servo = app->servo_controller.get();
     RelayController* relay = app->relay_controller.get();
     GpioController* gpio = app->gpio_controller.get();
     DataFileController* data_file = app->data_file_controller.get();
+    IoConfigController* io_config = app->io_config.get();
+    OutputSupervisor* supervisor = app->supervisor.get();
+
+    // A trip goes through the output's controller, so its state, the telemetry
+    // and the actuator log stay right.
+    supervisor->set_trip_handler([relay, gpio](const OutputId& output, const std::string& reason) {
+        if (output.kind == OutputKind::Gpio) {
+            gpio->drive_safe(output.index, reason);
+        } else {
+            relay->drive_safe(output.index, reason);
+        }
+    });
+
+    app->router = std::make_unique<CommandRouter>(kCommandSourceId);
+    app->router->set_stats(app->stats.get());
+    // relay, gpio and servo drive this node's outputs: accepted only on
+    // nova/command/<node>. data_file is for every node.
     app->router->register_handler("servo", [servo](const boost::json::object& cmd) {
         servo->handle_command(cmd);
-    });
+    }, true);
     app->router->register_handler("relay", [relay](const boost::json::object& cmd) {
         relay->handle_command(cmd);
-    });
+    }, true);
     app->router->register_handler("gpio", [gpio](const boost::json::object& cmd) {
         gpio->handle_command(cmd);
-    });
+    }, true);
     app->router->register_handler("data_file", [data_file](const boost::json::object& cmd) {
         data_file->handle_command(cmd);
     });
 
+    app->dispatcher = std::make_unique<MessageDispatcher>(
+        app->topics,
+        *app->router,
+        [io_config](const std::string& payload) { io_config->handle_message(payload); },
+        [supervisor](const std::string& payload, bool retained) { supervisor->heartbeat(payload, retained); });
+
     app->cli = std::make_shared<mqtt::async_client>(broker_address, config.node_id);
     auto cli = app->cli;
 
-    auto connOpts = mqtt::connect_options_builder()
-                        .clean_session(true)
-                        .automatic_reconnect(seconds(1), seconds(10))
-                        .finalize();
-
     {
-        auto topics = mqtt::string_collection::create({kCommandTopic});
-        const std::vector<int> qos{1};
+        const std::vector<std::string> subscriptions = app->topics.subscriptions();
+        auto topics = mqtt::string_collection::create(subscriptions);
+        const std::vector<int> qos(subscriptions.size(), 1);
         StatsRegistry* stats = app->stats.get();
         const std::string node_id = config.node_id;
-        cli->set_connected_handler([cli, topics, qos, stats, node_id](const std::string& /*cause*/) {
+        const std::string status_topic = app->topics.config_status;
+
+        // The config status, retained, whenever it changes and on every
+        // (re)connect. Not waited on: this can run on the client's callback
+        // thread.
+        std::weak_ptr<mqtt::async_client> weak_cli = cli;
+        io_config->set_publisher([weak_cli, status_topic](const std::string& status) {
+            auto client = weak_cli.lock();
+            if (client && client->is_connected()) {
+                client->publish(status_topic, status, 1, true);
+            }
+        });
+
+        cli->set_connected_handler([cli, topics, qos, stats, node_id, subscriptions, io_config](
+                                       const std::string& /*cause*/) {
             cli->subscribe(topics, qos);
-            std::cout << "Subscribed to " << kCommandTopic << std::endl;
+            for (const auto& topic : subscriptions) {
+                std::cout << "Subscribed to " << topic << std::endl;
+            }
             // Retained, so the broker keeps it for late subscribers; sent on
             // every (re)connect in case a broker restart dropped it. Not waited
             // on: this runs on the client's own callback thread.
             if (stats->enabled()) {
                 cli->publish(stats_info_topic(node_id), stats->identity_json(), 1, true);
             }
+            io_config->publish_status();
+        });
+        // A lost connection is a comms loss for the output supervisor, until
+        // the next live heartbeat after reconnecting.
+        cli->set_connection_lost_handler([supervisor](const std::string& cause) {
+            std::cerr << "MQTT connection lost" << (cause.empty() ? "" : ": " + cause) << std::endl;
+            supervisor->connection_lost();
         });
     }
+
+    return app;
+}
+
+// Connects to the broker: five attempts, then carries on without it (paho's
+// automatic reconnect takes over once a connection has been made). Blocks for as
+// long as the attempts take, so run() calls it after the supervisor thread is
+// running and systemd has been told READY=1.
+void connect_broker(App& app) {
+    auto& cli = app.cli;
+    auto connOpts = mqtt::connect_options_builder()
+                        .clean_session(true)
+                        .automatic_reconnect(seconds(1), seconds(10))
+                        .finalize();
 
     cli->start_consuming();
 
@@ -273,8 +353,6 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
     if (!connected) {
         std::cerr << "MQTT connection unavailable; continuing without broker." << std::endl;
     }
-
-    return app;
 }
 
 // Starts the loops and runs until `stop` is requested, then stops and joins
@@ -282,6 +360,34 @@ std::unique_ptr<App> build_app(const RuntimeConfig& config) {
 void run(App& app, std::stop_token stop) {
     std::vector<std::jthread> threads;
     Hardware& hw = app.hardware;
+
+    // Max on-time and comms-loss trips. Each pass also publishes the config
+    // status when the trips changed, and pings systemd's watchdog
+    // (WatchdogSec in novaGround@.service): if this thread stalls, the pings
+    // stop and systemd restarts the process.
+    {
+        OutputSupervisor* supervisor = app.supervisor.get();
+        IoConfigController* io_config = app.io_config.get();
+        threads.emplace_back(supervisor_loop,
+                             std::ref(*app.supervisor),
+                             std::function<void()>([supervisor, io_config]() {
+                                 if (supervisor->take_changed()) {
+                                     io_config->publish_status();
+                                 }
+                                 sd_notify_send("WATCHDOG=1");
+                             }),
+                             kSupervisorIntervalMs,
+                             app.stats.get());
+    }
+
+    // Startup is done: no GPIO pin is claimed and the relays are de-energized
+    // until the config arrives, and the supervisor is pinging the watchdog.
+    // (Nothing happens without NOTIFY_SOCKET.)
+    if (sd_notify_send("READY=1")) {
+        std::cout << "Told systemd we are ready" << std::endl;
+    }
+
+    connect_broker(app);
 
     threads.emplace_back(publisher_loop,
                          app.cli,
@@ -308,7 +414,7 @@ void run(App& app, std::stop_token stop) {
                              app.stats.get());
     }
 
-    threads.emplace_back(consumer_loop, app.cli, std::ref(*app.router));
+    threads.emplace_back(consumer_loop, app.cli, std::ref(*app.dispatcher));
 
     if (app.stats->enabled()) {
         threads.emplace_back(stats_loop,
@@ -333,6 +439,7 @@ void run(App& app, std::stop_token stop) {
     InterruptibleSleep sleeper;
     while (!sleeper.sleep_for(stop, seconds(1))) {
     }
+    sd_notify_send("STOPPING=1");
 }
 
 // What is left to do once the loops have stopped and been joined. Writes no

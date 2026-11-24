@@ -83,6 +83,10 @@ if have_paho
         link_with: sim_libs,
         cpp_args: common_cpp_args + [
             '-DNOVA_BUILD_ID="novaMock"',
+            # novaMock acts on novaGround's commands and config (its command,
+            # config and config-status topics) and keeps its own name
+            # everywhere else. See docs/simulation.md.
+            '-DNOVA_STANDS_IN_FOR="novaGround"',
             '-DNOVA_DEFAULT_SAMPLE_MS=100',
             '-DNOVA_DEFAULT_PUBLISH_MS=250',
         ],
@@ -127,8 +131,9 @@ daqlib = cpp.find_library('daqhats', dirs: '/usr/local/lib', required: false)
 # work so that change can be reversed.
 wiringpi_dep = cpp.find_library('wiringPi', required: true)
 
-# libgpiod library
-gpiod_dep = dependency('libgpiod', version: '>=1.6', required: true)
+# libgpiod library. The code uses the v1 API (gpiod_line_request_output and
+# friends), which libgpiod 2.0 removed.
+gpiod_dep = dependency('libgpiod', version: ['>=1.6', '<2'], required: true)
 
 src = core_src + app_src + real_src
 

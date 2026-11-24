@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <bitset>
 #include <fstream>
@@ -9,6 +9,10 @@
 
 #include "core/telemetry.hpp"
 
+// The actuator CSV's columns: timestamp, gpio_<pin> for each output pin, relay_0
+// to relay_15, servo_0 to servo_15, type_id.
+std::vector<std::string> actuator_log_headers(const std::vector<int>& output_pins);
+
 class DataLogger {
 public:
     DataLogger(std::string data_dir,
@@ -17,7 +21,12 @@ public:
                std::vector<int> gpio_pins,
                std::string file_prefix);
 
+    // Opens a new recording. Its actuator columns are the ones last set with
+    // set_actuator_columns (or given to the constructor).
     bool start(const std::string& base_filename);
+    // The actuator columns for the next recording: the GPIO outputs configured
+    // when it starts. A recording already open keeps its columns.
+    void set_actuator_columns(std::vector<std::string> actuator_headers, std::vector<int> gpio_pins);
     void stop();
     bool is_active() const;
     std::string last_sensor_path() const;
@@ -36,6 +45,8 @@ private:
     std::vector<std::string> sensor_headers_;
     std::vector<std::string> actuator_headers_;
     std::vector<int> gpio_pins_;
+    std::vector<std::string> next_actuator_headers_;
+    std::vector<int> next_gpio_pins_;
 
     mutable std::mutex mutex_;
     std::ofstream sensor_file_;

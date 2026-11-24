@@ -1,14 +1,27 @@
 #include "linux_gpio.hpp"
+
+#include <cerrno>
+#include <cstring>
 #include <iostream>
+#include <stdexcept>
+
+namespace {
+// The consumer name the kernel shows for our lines (gpioinfo).
+const char* kConsumer = "novaGround";
+
+std::string errno_text() {
+    const int e = errno;
+    return std::string(std::strerror(e)) + " (errno " + std::to_string(e) + ")";
+}
+}  // namespace
 
 LinuxGpio::LinuxGpio(const std::string& chipname) {
     chip_ = gpiod_chip_open(chipname.c_str());
     if (!chip_) {
-        throw std::runtime_error("Failed to open GPIO chip: " + chipname);
+        throw std::runtime_error("Failed to open GPIO chip " + chipname + ": " + errno_text());
     }
-    else {
-        std::cout << "GPIO chip opened successfully: " << chipname << std::endl;
-    }
+    std::cout << "GPIO chip opened: " << chipname << " (no pin is claimed until the config arrives)"
+              << std::endl;
 }
 
 LinuxGpio::~LinuxGpio() {
@@ -18,73 +31,122 @@ LinuxGpio::~LinuxGpio() {
             gpiod_line_release(info.line);
         }
     }
+    pins_.clear();
     if (chip_) {
         gpiod_chip_close(chip_);
     }
 }
 
-bool LinuxGpio::set_direction(int pin, const std::string& direction) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (pins_.count(pin) && pins_[pin].line) {
-        gpiod_line_release(pins_[pin].line);
+void LinuxGpio::release_locked(int pin) {
+    auto it = pins_.find(pin);
+    if (it == pins_.end()) {
+        return;
     }
+    if (it->second.line) {
+        gpiod_line_release(it->second.line);
+    }
+    pins_.erase(it);
+}
 
-    gpiod_line* line = gpiod_chip_get_line(chip_, pin);
+gpiod_line* LinuxGpio::line_for(int pin) {
+    if (pin < 0) {
+        std::cerr << "GPIO " << pin << ": not a pin number" << std::endl;
+        return nullptr;
+    }
+    gpiod_line* line = gpiod_chip_get_line(chip_, static_cast<unsigned int>(pin));
     if (!line) {
-        std::cerr << "Failed to get line for GPIO " << pin << "\n";
+        std::cerr << "GPIO " << pin << ": no such line: " << errno_text() << std::endl;
+    }
+    return line;
+}
+
+bool LinuxGpio::configure_output(int pin, int level) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const int value = level ? 1 : 0;
+    auto it = pins_.find(pin);
+    if (it != pins_.end() && it->second.direction == Direction::Out) {
+        // Already ours as an output: set the level, never release in between
+        // (a release and a new request would glitch the line).
+        if (gpiod_line_set_value(it->second.line, value) != 0) {
+            std::cerr << "GPIO " << pin << ": write of " << value << " failed: " << errno_text() << std::endl;
+            return false;
+        }
+        return true;
+    }
+    release_locked(pin);
+
+    gpiod_line* line = line_for(pin);
+    if (!line) {
         return false;
     }
-
-    int result;
-    if (direction == "out") {
-        result = gpiod_line_request_output(line, "GpioControl", 0);
-        std::cout << "Set GPIO " << pin << " as output\n";
-    } else if (direction == "in") {
-        result = gpiod_line_request_input(line, "GpioControl");
-        std::cout << "Set GPIO " << pin << " as input\n";
-    } else {
-        std::cerr << "Invalid direction for GPIO " << pin << ": " << direction << "\n";
+    // The level is part of the request, so the line never drives anything else.
+    if (gpiod_line_request_output(line, kConsumer, value) < 0) {
+        std::cerr << "GPIO " << pin << ": claim as output failed: " << errno_text() << std::endl;
         return false;
     }
+    pins_[pin] = PinInfo{line, Direction::Out};
+    std::cout << "GPIO " << pin << ": claimed as output at " << value << std::endl;
+    return true;
+}
 
-    if (result < 0) {
-        std::cerr << "Failed to set direction for GPIO " << pin << "\n";
+bool LinuxGpio::configure_input(int pin) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pins_.find(pin);
+    if (it != pins_.end() && it->second.direction == Direction::In) {
+        return true;
+    }
+    release_locked(pin);
+
+    gpiod_line* line = line_for(pin);
+    if (!line) {
         return false;
     }
+    if (gpiod_line_request_input(line, kConsumer) < 0) {
+        std::cerr << "GPIO " << pin << ": claim as input failed: " << errno_text() << std::endl;
+        return false;
+    }
+    pins_[pin] = PinInfo{line, Direction::In};
+    std::cout << "GPIO " << pin << ": claimed as input" << std::endl;
+    return true;
+}
 
-    pins_[pin] = {line, direction};
+bool LinuxGpio::release(int pin) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (pins_.count(pin)) {
+        release_locked(pin);
+        std::cout << "GPIO " << pin << ": released" << std::endl;
+    }
     return true;
 }
 
 bool LinuxGpio::write(int pin, int value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!pins_.count(pin) || pins_[pin].direction != "out") {
-        std::cerr << "Pin " << pin << " not configured as output\n";
+    auto it = pins_.find(pin);
+    if (it == pins_.end() || it->second.direction != Direction::Out) {
+        std::cerr << "GPIO " << pin << ": not claimed as an output" << std::endl;
         return false;
     }
-    bool success = gpiod_line_set_value(pins_[pin].line, value) == 0;
-    if (!success) {
-        std::cerr << "Failed to write to GPIO " << pin << "\n";
+    const int level = value ? 1 : 0;
+    if (gpiod_line_set_value(it->second.line, level) != 0) {
+        std::cerr << "GPIO " << pin << ": write of " << level << " failed: " << errno_text() << std::endl;
         return false;
     }
-    std::cout << "Wrote " << value << " to GPIO " << pin << "\n";
-    return success;
+    return true;
 }
 
 bool LinuxGpio::read(int pin, int& value) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!pins_.count(pin) || pins_[pin].direction != "in") {
-        std::cerr << "Pin " << pin << " not configured as input\n";
+    auto it = pins_.find(pin);
+    if (it == pins_.end() || it->second.direction != Direction::In) {
+        std::cerr << "GPIO " << pin << ": not claimed as an input" << std::endl;
         return false;
     }
-    int val = gpiod_line_get_value(pins_[pin].line);
+    int val = gpiod_line_get_value(it->second.line);
     if (val < 0) {
-        std::cerr << "Failed to read GPIO " << pin << "\n";
+        std::cerr << "GPIO " << pin << ": read failed: " << errno_text() << std::endl;
         return false;
     }
     value = val;
-    std::cout << "Read GPIO " << pin << ": " << value << "\n";
     return true;
 }
 
@@ -92,18 +154,19 @@ std::vector<int> LinuxGpio::get_input_pins() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> result;
     for (const auto& [pin, info] : pins_) {
-        if (info.direction == "in") result.push_back(pin);
+        if (info.direction == Direction::In) result.push_back(pin);
     }
     return result;
 }
+
 std::map<int, int> LinuxGpio::read_all_inputs() {
     std::map<int, int> result;
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& [pin, info] : pins_) {
-        if (info.direction == "in") {
+        if (info.direction == Direction::In) {
             int val = gpiod_line_get_value(info.line);
             if (val < 0) {
-                std::cerr << "Failed to read GPIO " << pin << "\n";
+                std::cerr << "GPIO " << pin << ": read failed: " << errno_text() << std::endl;
                 continue;
             }
             result[pin] = val;
@@ -116,12 +179,12 @@ std::map<int, int> LinuxGpio::read_all_outputs() {
     std::map<int, int> result;
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& [pin, info] : pins_) {
-        if (info.direction == "out") {
+        if (info.direction == Direction::Out) {
             // For a line requested as an output this returns the level it is
             // being driven to; it does not change it.
             int val = gpiod_line_get_value(info.line);
             if (val < 0) {
-                std::cerr << "Failed to read back GPIO " << pin << "\n";
+                std::cerr << "GPIO " << pin << ": read-back failed: " << errno_text() << std::endl;
                 continue;
             }
             result[pin] = val;

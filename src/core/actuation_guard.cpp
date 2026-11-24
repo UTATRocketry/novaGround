@@ -24,7 +24,7 @@ bool StoppedPwmDriver::disablePWM(uint8_t) {
     return true;
 }
 
-bool StoppedDigitalIo::set_direction(int, const std::string&) {
+bool StoppedDigitalIo::configure_output(int, int) {
     dropped(stats_);
     return true;
 }

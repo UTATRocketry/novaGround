@@ -1,4 +1,4 @@
-﻿#include "command_router.hpp"
+#include "command_router.hpp"
 
 #include <iostream>
 
@@ -9,11 +9,12 @@ namespace json = boost::json;
 CommandRouter::CommandRouter(std::string expected_source)
     : expected_source_(std::move(expected_source)) {}
 
-void CommandRouter::register_handler(const std::string& type, Handler handler) {
-    handlers_[type] = std::move(handler);
+void CommandRouter::register_handler(const std::string& type, Handler handler, bool node_only) {
+    handlers_[type] = Entry{std::move(handler), node_only};
 }
 
 void CommandRouter::handle_message(const std::string& payload,
+                                   CommandOrigin origin,
                                    std::chrono::steady_clock::time_point received) {
     boost::system::error_code ec;
     json::value parsed = json::parse(payload, ec);
@@ -61,10 +62,11 @@ void CommandRouter::handle_message(const std::string& payload,
         return;
     }
 
-    handle_command_object(cmd_obj, received);
+    handle_command_object(cmd_obj, origin, received);
 }
 
 void CommandRouter::handle_command_object(const json::object& cmd,
+                                          CommandOrigin origin,
                                           std::chrono::steady_clock::time_point received) {
     auto type_it = cmd.if_contains("type");
     if (!type_it || !type_it->is_string()) {
@@ -78,12 +80,20 @@ void CommandRouter::handle_command_object(const json::object& cmd,
         std::cerr << "Unhandled command type: " << type << "\n";
         return;
     }
+    if (handler_it->second.node_only && origin == CommandOrigin::Broadcast) {
+        std::cerr << "Refused a '" << type << "' command on the broadcast topic: commands that drive this "
+                  << "node's outputs must come on its own topic (nova/command/<node>)" << std::endl;
+        if (stats_) {
+            stats_->count_refused_command();
+        }
+        return;
+    }
 
     // The handler runs on this thread and returns after the driver write, so
     // "done" is the write finishing.
     const auto handling = std::chrono::steady_clock::now();
     try {
-        handler_it->second(cmd);
+        handler_it->second.handler(cmd);
     } catch (const std::exception& e) {
         std::cerr << "Command handler error: " << e.what() << "\n";
     } catch (...) {

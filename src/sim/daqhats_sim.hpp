@@ -28,4 +28,8 @@ std::map<int, int> gpio_inputs();
 // to the real (steady) clock.
 void set_clock(std::function<double()> seconds);
 
+// The thermocouple type last written to an MCC 134 channel (the library's
+// TC_TYPE_* value), or -1 if none was.
+int tc_type(int address, int channel);
+
 }  // namespace daqhats_sim

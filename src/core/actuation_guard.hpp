@@ -56,13 +56,17 @@ private:
     StatsRegistry* stats_;
 };
 
-// Changing a pin's direction is dropped too: a pin switched to output starts
-// driving its line.
+// Claiming a pin as an output is dropped too: a claimed output starts driving
+// its line. Claiming an input and releasing a pin go through: neither drives a
+// line, and the GPIO sampler needs the inputs. (Under --stop-actuate no output
+// is ever claimed, so a release never stops a line this program drove.)
 class StoppedDigitalIo : public DigitalIo {
 public:
     StoppedDigitalIo(DigitalIo& inner, StatsRegistry* stats) : inner_(inner), stats_(stats) {}
 
-    bool set_direction(int pin, const std::string& direction) override;
+    bool configure_output(int pin, int level) override;
+    bool configure_input(int pin) override { return inner_.configure_input(pin); }
+    bool release(int pin) override { return inner_.release(pin); }
     bool write(int pin, int value) override;
     bool read(int pin, int& value) override { return inner_.read(pin, value); }
     std::vector<int> get_input_pins() override { return inner_.get_input_pins(); }

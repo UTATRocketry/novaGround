@@ -237,6 +237,38 @@ void StatsRegistry::count_stopped_write() {
     ++stopped_writes_;
 }
 
+void StatsRegistry::count_gpio_claim_failure() {
+    if (!enabled_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++gpio_claim_failures_;
+}
+
+void StatsRegistry::count_gpio_write_failure() {
+    if (!enabled_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++gpio_write_failures_;
+}
+
+void StatsRegistry::count_refused_command() {
+    if (!enabled_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++refused_commands_;
+}
+
+void StatsRegistry::count_output_trip() {
+    if (!enabled_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++output_trips_;
+}
+
 std::string StatsRegistry::identity_json() {
     json::object root;
     root["schema"] = kSchema;
@@ -299,5 +331,9 @@ std::string StatsRegistry::take_stats_json() {
     root["daq_read_errors"] = daq_read_errors_;
     root["actuator_read_errors"] = actuator_read_errors_;
     root["stopped_writes"] = stopped_writes_;
+    root["gpio_claim_failures"] = gpio_claim_failures_;
+    root["gpio_write_failures"] = gpio_write_failures_;
+    root["refused_commands"] = refused_commands_;
+    root["output_trips"] = output_trips_;
     return json::serialize(root);
 }

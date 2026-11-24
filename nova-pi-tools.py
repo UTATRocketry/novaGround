@@ -112,6 +112,30 @@ def health(backend):
 E = os.environ
 
 
+def file_has_line(path, line):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return any(l.strip() == line for l in fh)
+    except OSError:
+        return False
+
+
+def watchdog_state():
+    """The Pi's hardware watchdog, which nova-pi.sh install sets up: whether
+    config.txt turns it on (dtparam=watchdog=on), whether systemd is told to ping
+    it (RuntimeWatchdogSec), and whether systemd is pinging it now (it starts
+    after a reboot)."""
+    boot = [p for p in E.get("BOOT_CONFIGS", "").split() if os.path.isfile(p)]
+    seconds = E.get("RUNTIME_WATCHDOG_SEC", "10")
+    runtime = run(["systemctl", "show", "-p", "RuntimeWatchdogUSec", "--value"]) or None
+    return {
+        "configTxt": bool(boot) and file_has_line(boot[0], "dtparam=watchdog=on"),
+        "systemConf": file_has_line(E.get("SYSTEMD_CONF", ""), "RuntimeWatchdogSec=%s" % seconds),
+        "running": runtime not in (None, "0", "infinity", "off"),
+        "runtime": runtime,
+    }
+
+
 def snapshot(mode):
     DIRS = {"prod": E["PROD_DIR"], "dev": E["DEV_DIR"]}
     pi = read_env(E["PI_ENV"]) or {}
@@ -178,6 +202,8 @@ def snapshot(mode):
         snap["deployed"] = {"release": deployed.get("release"), "commit": deployed.get("commit"),
                             "time": deployed.get("deployed")}
 
+    snap["watchdog"] = watchdog_state()
+
     if mode == "json":
         print(json.dumps(snap, indent=2))
         sys.exit(0)
@@ -233,6 +259,14 @@ def snapshot(mode):
             uc = G if up.get("ok") else R
             print("                 last upload %s %s%s%s" % (up.get("time"), uc, "OK" if up.get("ok") else "FAILED", X))
     print("    console      %s" % (console or "(not set yet)"))
+    w = snap["watchdog"]
+    if w["configTxt"] and w["systemConf"] and w["running"]:
+        print(G + "    watchdog     hardware watchdog on, systemd pings it (%s)" % w["runtime"] + X)
+    elif w["configTxt"] and w["systemConf"]:
+        print(Y + "    watchdog     set up, not running yet - reboot the Pi" + X)
+    else:
+        missing = [name for name, on in (("config.txt", w["configTxt"]), ("system.conf", w["systemConf"])) if not on]
+        print(R + "    watchdog     OFF (not set in %s) - run: sudo ./nova-pi.sh install" % ", ".join(missing) + X)
     print()
 
 

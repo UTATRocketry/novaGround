@@ -1,4 +1,4 @@
-﻿#include "loops.hpp"
+#include "loops.hpp"
 
 #include <boost/json.hpp>
 #include <algorithm>
@@ -101,7 +101,7 @@ void publisher_loop(std::stop_token stop,
     }
 }
 
-void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, CommandRouter& router) {
+void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, MessageDispatcher& dispatcher) {
     InterruptibleSleep sleeper;
     while (!stop.stop_requested()) {
         try {
@@ -117,8 +117,7 @@ void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, CommandRout
             }
 
             const auto received = steady_clock::now();
-            std::string m_str = msg->to_string();
-            router.handle_message(m_str, received);
+            dispatcher.dispatch(msg->get_topic(), msg->to_string(), msg->is_retained(), received);
         } catch (const std::exception& e) {
             std::cerr << "Consumer error: " << e.what() << std::endl;
         } catch (...) {

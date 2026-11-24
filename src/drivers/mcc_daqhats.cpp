@@ -19,6 +19,23 @@ std::vector<int> channels_for_hat(int hat_id) {
     }
 }
 
+// The library's constant for a type. TC_DISABLED is part of MCC's TcTypes enum
+// (and the simulator's header).
+uint8_t library_tc_type(TcType type) {
+    switch (type) {
+        case TcType::J: return TC_TYPE_J;
+        case TcType::K: return TC_TYPE_K;
+        case TcType::T: return TC_TYPE_T;
+        case TcType::E: return TC_TYPE_E;
+        case TcType::R: return TC_TYPE_R;
+        case TcType::S: return TC_TYPE_S;
+        case TcType::B: return TC_TYPE_B;
+        case TcType::N: return TC_TYPE_N;
+        case TcType::Disabled: return TC_DISABLED;
+    }
+    return TC_TYPE_K;
+}
+
 const char* hat_type_label(int hat_id) {
     switch (hat_id) {
         case HAT_ID_MCC_128:
@@ -49,6 +66,7 @@ std::vector<DaqHatDevice> MccDaqHats::discover() {
             device.address = list[i].address;
             device.hat_id = list[i].id;
             device.channels = channels_for_hat(device.hat_id);
+            device.thermocouples = device.hat_id == HAT_ID_MCC_134;
 
             std::cout << "Detected DAQ Hat at address: " << device.address
                       << " (type=" << hat_type_label(device.hat_id) << ")"
@@ -87,8 +105,10 @@ bool MccDaqHats::open(const DaqHatDevice& hat) {
                           << hat.address << ": code " << result << std::endl;
                 return false;
             }
+            // Every channel starts as kUnconfiguredTcType; the per-node config
+            // sets the configured ones when it arrives.
             for (int channel : hat.channels) {
-                result = mcc134_tc_type_write(hat.address, channel, TC_TYPE_K);
+                result = mcc134_tc_type_write(hat.address, channel, library_tc_type(kUnconfiguredTcType));
                 if (result != RESULT_SUCCESS) {
                     std::cerr << "Failed to set MCC134 TC type (addr="
                               << hat.address << ", channel=" << channel
@@ -96,6 +116,7 @@ bool MccDaqHats::open(const DaqHatDevice& hat) {
                     return false;
                 }
             }
+            mcc134_open_.push_back(hat.address);
             return true;
         default:
             std::cerr << "DAQ Hat type not implemented yet (hat_id="
@@ -127,5 +148,26 @@ bool MccDaqHats::read(const DaqHatDevice& hat, int channel, double& value) {
                   << ", code=" << result << ")\n";
         return false;
     }
+    return true;
+}
+
+bool MccDaqHats::set_tc_type(int address, int channel, TcType type) {
+    bool is_open = false;
+    for (int a : mcc134_open_) {
+        is_open = is_open || a == address;
+    }
+    if (!is_open || channel < 0 || channel > 3) {
+        std::cerr << "No open MCC134 channel at address " << address << ", channel " << channel << std::endl;
+        return false;
+    }
+    int result = mcc134_tc_type_write(static_cast<uint8_t>(address), static_cast<uint8_t>(channel),
+                                      library_tc_type(type));
+    if (result != RESULT_SUCCESS) {
+        std::cerr << "Failed to set MCC134 TC type " << tc_type_name(type) << " (addr=" << address
+                  << ", channel=" << channel << ", code=" << result << ")" << std::endl;
+        return false;
+    }
+    std::cout << "MCC134 address " << address << " channel " << channel << ": type " << tc_type_name(type)
+              << std::endl;
     return true;
 }

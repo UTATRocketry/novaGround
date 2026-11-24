@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "mqtt/async_client.h"
 
@@ -6,7 +6,7 @@
 #include <string>
 
 #include "core/actuator_state.hpp"
-#include "core/command_router.hpp"
+#include "core/node_topics.hpp"
 #include "core/stats.hpp"
 #include "core/telemetry.hpp"
 
@@ -25,10 +25,11 @@ void publisher_loop(std::stop_token stop,
                     int publish_interval_ms,
                     StatsRegistry* stats);
 
-// With stats on, the router times each command from the moment it is consumed
-// here (see CommandRouter::set_stats). The loop itself has no period to report:
-// it waits on the broker.
-void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, CommandRouter& router);
+// Hands every message the client receives to the dispatcher, with its topic and
+// retained flag. With stats on, the router times each command from the moment
+// it is consumed here (see CommandRouter::set_stats). The loop itself has no
+// period to report: it waits on the broker.
+void consumer_loop(std::stop_token stop, mqtt::async_client_ptr cli, MessageDispatcher& dispatcher);
 
 // Publishes the registry's stats message (not retained) on stats_topic() every
 // interval_ms. Start it only when stats are enabled.

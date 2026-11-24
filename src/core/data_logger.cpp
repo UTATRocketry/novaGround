@@ -1,4 +1,4 @@
-﻿#include "data_logger.hpp"
+#include "data_logger.hpp"
 
 #include <chrono>
 #include <cctype>
@@ -11,6 +11,22 @@
 
 using namespace std::chrono;
 
+std::vector<std::string> actuator_log_headers(const std::vector<int>& output_pins) {
+    std::vector<std::string> headers;
+    headers.push_back("timestamp");
+    for (int pin : output_pins) {
+        headers.push_back("gpio_" + std::to_string(pin));
+    }
+    for (int i = 0; i < 16; ++i) {
+        headers.push_back("relay_" + std::to_string(i));
+    }
+    for (int i = 0; i < 16; ++i) {
+        headers.push_back("servo_" + std::to_string(i));
+    }
+    headers.push_back("type_id");
+    return headers;
+}
+
 DataLogger::DataLogger(std::string data_dir,
                        std::vector<std::string> sensor_headers,
                        std::vector<std::string> actuator_headers,
@@ -20,11 +36,22 @@ DataLogger::DataLogger(std::string data_dir,
       sensor_headers_(std::move(sensor_headers)),
       actuator_headers_(std::move(actuator_headers)),
       gpio_pins_(std::move(gpio_pins)),
-      file_prefix_(std::move(file_prefix)) {}
+      file_prefix_(std::move(file_prefix)) {
+    next_actuator_headers_ = actuator_headers_;
+    next_gpio_pins_ = gpio_pins_;
+}
+
+void DataLogger::set_actuator_columns(std::vector<std::string> actuator_headers, std::vector<int> gpio_pins) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    next_actuator_headers_ = std::move(actuator_headers);
+    next_gpio_pins_ = std::move(gpio_pins);
+}
 
 bool DataLogger::start(const std::string& base_filename) {
     std::lock_guard<std::mutex> lock(mutex_);
     close_files();
+    actuator_headers_ = next_actuator_headers_;
+    gpio_pins_ = next_gpio_pins_;
     active_ = open_files(base_filename);
     return active_;
 }
