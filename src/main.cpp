@@ -136,8 +136,7 @@ void write_hardware_state(const hardware_check::Report& report) {
             std::cerr << "Could not write " << tmp << std::endl;
             return;
         }
-        out << boost::json::serialize(doc) << "
-";
+        out << boost::json::serialize(doc) << '\n';
     }
     std::filesystem::rename(tmp, target, ec);
     if (ec) {
